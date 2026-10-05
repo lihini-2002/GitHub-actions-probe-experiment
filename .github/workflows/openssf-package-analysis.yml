@@ -1,0 +1,274 @@
+name: OpenSSF Package Analysis on GitHub Actions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  openssf-analysis:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout experiment repository
+        uses: actions/checkout@v4
+      - name: Create experiment directories
+        run: |
+          mkdir -p experiment-output/metadata
+          mkdir -p experiment-output/openssf
+          mkdir -p experiment-output/probe
+
+      - name: Record GitHub Actions host metadata
+        run: |
+          {
+            echo "=== TIMESTAMP ==="
+            date -u --iso-8601=seconds
+
+            echo
+            echo "=== GITHUB ACTIONS ==="
+            echo "GITHUB_ACTIONS=$GITHUB_ACTIONS"
+            echo "GITHUB_WORKFLOW=$GITHUB_WORKFLOW"
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo "GITHUB_RUN_NUMBER=$GITHUB_RUN_NUMBER"
+            echo "GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+            echo "GITHUB_JOB=$GITHUB_JOB"
+
+            echo
+            echo "=== RUNNER ==="
+            echo "RUNNER_OS=$RUNNER_OS"
+            echo "RUNNER_ARCH=$RUNNER_ARCH"
+            echo "RUNNER_NAME=$RUNNER_NAME"
+            echo "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT"
+            echo "RUNNER_TEMP=$RUNNER_TEMP"
+            echo "RUNNER_TOOL_CACHE=$RUNNER_TOOL_CACHE"
+
+            echo
+            echo "=== OS ==="
+            cat /etc/os-release
+
+            echo
+            echo "=== KERNEL ==="
+            uname -a
+
+            echo
+            echo "=== CPU ==="
+            lscpu
+
+            echo
+            echo "=== MEMORY ==="
+            free -h
+
+            echo
+            echo "=== FILESYSTEM ==="
+            df -Th
+
+            echo
+            echo "=== MOUNTS ==="
+            findmnt
+          } > experiment-output/metadata/github-host.txt
+      - name: Record Docker layer
+        run: |
+          {
+            echo "=== DOCKER VERSION ==="
+            docker version
+
+            echo
+            echo "=== DOCKER INFO ==="
+            docker info
+          } > experiment-output/metadata/docker-info.txt
+
+      - name: Verify privileged containers
+        run: |
+          docker run --rm --privileged alpine:latest sh -c \
+            'echo "privileged-container-ok"'
+
+      - name: Clone OpenSSF Package Analysis
+        run: |
+          git clone https://github.com/ossf/package-analysis.git
+
+      - name: Record OpenSSF Package Analysis version
+        run: |
+          cd package-analysis
+
+          {
+            echo "Repository: https://github.com/ossf/package-analysis"
+            echo "Commit: $(git rev-parse HEAD)"
+            echo "Branch: $(git branch --show-current)"
+            echo "Commit date: $(git show -s --format=%cI HEAD)"
+          } > ../experiment-output/metadata/openssf-version.txt
+
+      - name: Record experiment layers
+        run: |
+          cat > experiment-output/metadata/experiment.json <<EOF
+          {
+            "experiment": "github-actions-openssf-package-analysis",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "host_layer": {
+              "provider": "GitHub Actions",
+              "runner": "GitHub-hosted",
+              "os_label": "ubuntu-24.04",
+              "architecture": "${RUNNER_ARCH}"
+            },
+            "scanner_layer": {
+              "tool": "OpenSSF Package Analysis",
+              "analysis_mode": "dynamic"
+            },
+            "sandbox_layer": {
+              "outer_runtime": "Docker",
+              "inner_runtime": "Podman",
+              "sandbox": "gVisor"
+            },
+            "package_layer": {
+              "ecosystem": "npm",
+              "package": "npm-probing-package",
+              "version": "0.1.0",
+              "source": "local-tarball"
+            }
+          }
+          EOF
+
+      - name: Prepare OpenSSF result directories
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/experiment-output/openssf/dynamic-results"
+          mkdir -p "$GITHUB_WORKSPACE/experiment-output/openssf/static-results"
+          mkdir -p "$GITHUB_WORKSPACE/experiment-output/openssf/file-writes"
+          mkdir -p "$GITHUB_WORKSPACE/experiment-output/openssf/analyzed-package"
+          mkdir -p "$GITHUB_WORKSPACE/experiment-output/openssf/logs"
+          mkdir -p "$GITHUB_WORKSPACE/experiment-output/openssf/strace"
+
+      - name: Inspect OpenSSF command
+        working-directory: package-analysis
+        env:
+          RESULTS_DIR: ${{ github.workspace }}/experiment-output/openssf/dynamic-results
+          STATIC_RESULTS_DIR: ${{ github.workspace }}/experiment-output/openssf/static-results
+          FILE_WRITE_RESULTS_DIR: ${{ github.workspace }}/experiment-output/openssf/file-writes
+          ANALYZED_PACKAGES_DIR: ${{ github.workspace }}/experiment-output/openssf/analyzed-package
+          LOGS_DIR: ${{ github.workspace }}/experiment-output/openssf/logs
+          STRACE_LOGS_DIR: ${{ github.workspace }}/experiment-output/openssf/strace
+        run: |
+          scripts/run_analysis.sh \
+            -dryrun \
+            -nointeractive \
+            -mode dynamic \
+            -ecosystem npm \
+            -package npm-probing-package \
+            -local "$GITHUB_WORKSPACE/packages/npm-probing-package-0.1.0.tgz"
+
+      - name: Run OpenSSF dynamic analysis
+        working-directory: package-analysis
+        env:
+          RESULTS_DIR: ${{ github.workspace }}/experiment-output/openssf/dynamic-results
+          STATIC_RESULTS_DIR: ${{ github.workspace }}/experiment-output/openssf/static-results
+          FILE_WRITE_RESULTS_DIR: ${{ github.workspace }}/experiment-output/openssf/file-writes
+          ANALYZED_PACKAGES_DIR: ${{ github.workspace }}/experiment-output/openssf/analyzed-package
+          LOGS_DIR: ${{ github.workspace }}/experiment-output/openssf/logs
+          STRACE_LOGS_DIR: ${{ github.workspace }}/experiment-output/openssf/strace
+        run: |
+          scripts/run_analysis.sh \
+            -nointeractive \
+            -mode dynamic \
+            -ecosystem npm \
+            -package npm-probing-package \
+            -local "$GITHUB_WORKSPACE/packages/npm-probing-package-0.1.0.tgz"
+
+      - name: Search for probe output
+        if: always()
+        run: |
+          echo "Searching experiment outputs for probe JSON..."
+
+          find experiment-output \
+            -type f \
+            -name "install-*.json" \
+            -print || true
+
+      - name: List OpenSSF outputs
+        if: always()
+        run: |
+          echo "=== DYNAMIC RESULTS ==="
+          find experiment-output/openssf/dynamic-results -type f -print || true
+
+          echo "=== FILE WRITE RESULTS ==="
+          find experiment-output/openssf/file-writes -type f -print || true
+
+          echo "=== ANALYZED PACKAGE ==="
+          find experiment-output/openssf/analyzed-package -type f -print || true
+
+          echo "=== LOGS ==="
+          find experiment-output/openssf/logs -type f -print || true
+
+          echo "=== STRACE ==="
+          find experiment-output/openssf/strace -type f -print || true
+
+      - name: Collect direct probe result if available
+        if: always()
+        run: |
+          find experiment-output \
+            -type f \
+            -name "install-*.json" \
+            -exec cp {} experiment-output/probe/ \; || true
+
+      - name: Record container images
+        if: always()
+        run: |
+          {
+            echo "=== DOCKER IMAGES ==="
+            docker images --digests
+
+            echo
+            echo "=== ALL CONTAINERS ==="
+            docker ps -a
+          } > experiment-output/metadata/container-images.txt
+
+      - name: Create run manifest
+        if: always()
+        run: |
+          cat > experiment-output/run-manifest.txt <<EOF
+          Experiment ID: GA-OPENSSF-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
+
+          Condition:
+          GitHub Actions Ubuntu 24.04 + OpenSSF Package Analysis
+
+          Layers:
+          L1 = GitHub-hosted Ubuntu 24.04 VM
+          L2 = OpenSSF analysis Docker container
+          L3 = OpenSSF Podman/gVisor dynamic-analysis sandbox
+          L4 = npm package execution
+          L5 = environment probing package
+
+          Package:
+          npm-probing-package 0.1.0
+
+          Package source:
+          local .tgz archive
+
+          OpenSSF mode:
+          dynamic
+
+          Trigger:
+          workflow_dispatch
+
+          GitHub Run ID:
+          ${GITHUB_RUN_ID}
+
+          GitHub Run Attempt:
+          ${GITHUB_RUN_ATTEMPT}
+
+          Timestamp:
+          $(date -u --iso-8601=seconds)
+          EOF
+
+      - name: Upload complete experiment bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openssf-github-actions-run-${{ github.run_id }}-${{ github.run_attempt }}
+          path: experiment-output/
+
+      - name: Upload complete experiment bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openssf-github-actions-run-${{ github.run_id }}-${{ github.run_attempt }}
+          path: experiment-output/
