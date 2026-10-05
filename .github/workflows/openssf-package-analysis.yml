@@ -98,6 +98,27 @@ jobs:
             echo "Commit date: $(git show -s --format=%cI HEAD)"
           } > ../experiment-output/metadata/openssf-version.txt
 
+      - name: Build analysis image with larger strace capture limit
+        run: |
+          # OpenSSF's analysis image runs the package inside gVisor via
+          # /usr/local/bin/runsc_compat.sh, launched with --runtime-flag=strace.
+          # gVisor's runsc defaults to strace-log-size=1024, so each captured
+          # write() buffer in the file-write results is truncated to 1024 bytes.
+          # The probing package writes its install report in a single ~21 KB
+          # write(), so only the first 1 KB survives. Rebuild the image on top of
+          # the published one, injecting a larger --strace-log-size so the whole
+          # report is recorded. This only increases how much the scanner logs;
+          # the package under analysis is unchanged.
+          #
+          # Tagging the result with the same name the runner script expects
+          # (gcr.io/ossf-malware-analysis/analysis) makes `docker run` use this
+          # local image instead of re-pulling the upstream one.
+          docker build -t gcr.io/ossf-malware-analysis/analysis - <<'DOCKERFILE'
+          FROM gcr.io/ossf-malware-analysis/analysis
+          RUN sed -i 's#exec "$BIN" "$@"#exec "$BIN" --strace-log-size=1048576 "$@"#' /usr/local/bin/runsc_compat.sh \
+            && grep -n 'strace-log-size' /usr/local/bin/runsc_compat.sh
+          DOCKERFILE
+
       - name: Record experiment layers
         run: |
           cat > experiment-output/metadata/experiment.json <<EOF
@@ -113,12 +134,15 @@ jobs:
             },
             "scanner_layer": {
               "tool": "OpenSSF Package Analysis",
-              "analysis_mode": "dynamic"
+              "analysis_mode": "dynamic",
+              "modified_from_stock": true,
+              "modification": "runsc strace-log-size raised to 1048576 bytes to capture full write() buffers"
             },
             "sandbox_layer": {
               "outer_runtime": "Docker",
               "inner_runtime": "Podman",
-              "sandbox": "gVisor"
+              "sandbox": "gVisor",
+              "strace_log_size_bytes": 1048576
             },
             "package_layer": {
               "ecosystem": "npm",
@@ -201,13 +225,33 @@ jobs:
           echo "=== STRACE ==="
           find experiment-output/openssf/strace -type f -print || true
 
-      - name: Collect direct probe result if available
+      - name: Reassemble probe report from strace write buffers
         if: always()
         run: |
+          set -uo pipefail
+          WRITES="experiment-output/openssf/file-writes"
+
+          if [ -f "$WRITES/write_buffers_.zip" ] && [ -f "$WRITES/results.json" ]; then
+            rm -rf "$WRITES/buffers"
+            unzip -o -q "$WRITES/write_buffers_.zip" -d "$WRITES/buffers"
+            node scripts/reassemble-probe.mjs \
+              "$WRITES/results.json" \
+              "$WRITES/buffers" \
+              experiment-output/probe
+          else
+            echo "No file-write results found; skipping reassembly."
+          fi
+
+          # Fallback: if the report ever lands directly on the runner filesystem
+          # (e.g. a non-sandboxed install), collect it too.
           find experiment-output \
             -type f \
             -name "install-*.json" \
+            -not -path "experiment-output/probe/*" \
             -exec cp {} experiment-output/probe/ \; || true
+
+          echo "=== RECOVERED PROBE REPORTS ==="
+          find experiment-output/probe -type f -print || true
 
       - name: Record container images
         if: always()
