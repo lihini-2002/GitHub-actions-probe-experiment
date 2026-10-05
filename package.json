@@ -1,0 +1,12 @@
+{
+  "name": "github-actions-ci-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node test.js",
+    "build": "node build.js"
+  },
+  "dependencies": {
+    "npm-probing-package": "file:packages/npm-probing-package-0.1.0.tgz"
+  }
+}

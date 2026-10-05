@@ -1,0 +1,73 @@
+name: GitHub Actions Ubuntu CI Environment Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  environment-probe:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Record basic CI metadata
+        run: |
+          mkdir -p experiment-metadata
+
+          echo "GitHub Actions experiment" > experiment-metadata/context.txt
+          echo "Timestamp: $(date -u --iso-8601=seconds)" >> experiment-metadata/context.txt
+          echo "Runner OS: $RUNNER_OS" >> experiment-metadata/context.txt
+          echo "Runner arch: $RUNNER_ARCH" >> experiment-metadata/context.txt
+          echo "Runner environment: $RUNNER_ENVIRONMENT" >> experiment-metadata/context.txt
+          echo "GitHub workflow: $GITHUB_WORKFLOW" >> experiment-metadata/context.txt
+          echo "GitHub run ID: $GITHUB_RUN_ID" >> experiment-metadata/context.txt
+          echo "GitHub run attempt: $GITHUB_RUN_ATTEMPT" >> experiment-metadata/context.txt
+
+          uname -a >> experiment-metadata/context.txt
+          node --version >> experiment-metadata/context.txt
+          npm --version >> experiment-metadata/context.txt
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Run normal tests
+        run: npm test
+
+      - name: Run normal build
+        run: npm run build
+
+      - name: Locate environment probe results
+        if: always()
+        run: |
+          echo "Looking for probe output..."
+          find . -type f -name "install-*.json" -print
+
+      - name: Collect probe output
+        if: always()
+        run: |
+          mkdir -p collected-results
+
+          find . -type f -name "install-*.json" \
+            -exec cp {} collected-results/ \;
+
+          cp experiment-metadata/context.txt collected-results/
+
+          echo "Collected files:"
+          ls -lah collected-results
+
+      - name: Upload experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-actions-ubuntu24-ci-probe
+          path: collected-results/
