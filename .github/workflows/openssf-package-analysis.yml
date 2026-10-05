@@ -265,10 +265,3 @@ jobs:
         with:
           name: openssf-github-actions-run-${{ github.run_id }}-${{ github.run_attempt }}
           path: experiment-output/
-
-      - name: Upload complete experiment bundle
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openssf-github-actions-run-${{ github.run_id }}-${{ github.run_attempt }}
-          path: experiment-output/
