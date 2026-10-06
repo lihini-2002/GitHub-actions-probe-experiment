@@ -1,0 +1,85 @@
+name: GitHub Actions Container Job Environment Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  environment-probe:
+    runs-on: ubuntu-24.04
+
+    container:
+      image: node:24-bookworm
+
+    env:
+      EXPERIMENT_ENV_ID: ENV058
+      EXPERIMENT_ENV_NAME: github-actions-container
+      EXPERIMENT_EXECUTION_TYPE: container_job
+      EXPERIMENT_RUNNER: ubuntu-24.04
+      EXPERIMENT_CONTAINER_IMAGE: node:24-bookworm
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Experiment metadata only; kept separate from the probe's own JSON output.
+      - name: Record experiment metadata
+        run: |
+          mkdir -p experiment-metadata
+
+          {
+            echo "GitHub Actions container job experiment"
+            echo "Environment ID: $EXPERIMENT_ENV_ID"
+            echo "Environment name: $EXPERIMENT_ENV_NAME"
+            echo "Execution type: $EXPERIMENT_EXECUTION_TYPE"
+            echo "Runner label: $EXPERIMENT_RUNNER"
+            echo "Container image: $EXPERIMENT_CONTAINER_IMAGE"
+            echo "Timestamp: $(date -u --iso-8601=seconds)"
+            echo "Runner OS: $RUNNER_OS"
+            echo "Runner arch: $RUNNER_ARCH"
+            echo "Runner environment: $RUNNER_ENVIRONMENT"
+            echo "GitHub workflow: $GITHUB_WORKFLOW"
+            echo "GitHub run ID: $GITHUB_RUN_ID"
+            echo "GitHub run attempt: $GITHUB_RUN_ATTEMPT"
+            uname -a
+            echo "Node version: $(node --version)"
+            echo "npm version: $(npm --version)"
+            echo "Probe package: $(node -p "require('./package.json').dependencies['npm-probing-package']")"
+          } > experiment-metadata/context.txt
+
+          cat experiment-metadata/context.txt
+
+      # Same mechanism as the Ubuntu VM workflow: the probe is a file: tarball
+      # dependency whose postinstall hook writes install-<runId>.json.
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Collect probe output
+        if: always()
+        run: |
+          mkdir -p collected-results
+
+          find . -type f -name "install-*.json" \
+            -exec cp {} collected-results/ \;
+
+          cp experiment-metadata/context.txt collected-results/
+
+          echo "Collected files:"
+          ls -lah collected-results
+
+      - name: Upload experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-actions-container-${{ github.run_id }}-${{ github.run_attempt }}
+          path: collected-results/
+
+      - name: Verify probe produced its JSON result
+        if: always()
+        run: |
+          if ! ls collected-results/install-*.json >/dev/null 2>&1; then
+            echo "::error::Probe did not produce an install-*.json result"
+            exit 1
+          fi
