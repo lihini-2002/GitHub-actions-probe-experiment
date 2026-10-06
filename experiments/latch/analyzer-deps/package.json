@@ -1,0 +1,14 @@
+{
+  "name": "latch-analyzer-deps",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Runtime dependencies required by tools/latch/analyzer and tools/latch/parser/b3/lib, pinned to 2020-era releases.",
+  "dependencies": {
+    "debug": "4.3.1",
+    "glob": "7.1.6",
+    "n-readlines": "1.0.1",
+    "node-exceptions": "4.0.1",
+    "pegjs": "0.10.0",
+    "pegjs-backtrace": "0.1.2"
+  }
+}

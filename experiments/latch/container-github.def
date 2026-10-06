@@ -1,0 +1,145 @@
+Bootstrap: debootstrap
+MirrorURL: http://us.archive.ubuntu.com/ubuntu
+OSVersion: focal
+
+# Adapted from tools/latch/singularity/container.def for GitHub Actions.
+# Built by build-image.sh from a staged context directory; see README.md
+# ("Deviations from upstream") for every change. In short:
+#   - %files take repository content from the staged context instead of
+#     /home/user/Documents/research/...
+#   - Node.js comes from a pinned, checksum-verified nodejs.org tarball instead
+#     of the retired deb.nodesource.com setup_12.x script; the version is a
+#     build argument (12.22.12 = upstream's major, 22.x = the probe's engines).
+#   - strace is installed explicitly; the npm hook calls /usr/bin/strace.
+#   - The LATCH analyzer and its pinned dependencies are added under /latch so
+#     manifests are generated inside the same image.
+#   - Global babel packages are pinned to the versions upstream would have
+#     received.
+
+%arguments
+    NODE_VERSION=12.22.12
+    NODE_SHA256=e6d052364bfa2c17da92cf31794100cfd709ba147415ddaeed2222eec9ca1469
+    LATCH_COMMIT=unknown
+    NPM_CLI_COMMIT=unknown
+
+%files
+    cli /cli
+    start.js /start.js
+    package.json /package.json
+    latch /latch
+
+%labels
+    org.latch.upstream https://github.com/elizabethwyss/Latch
+    org.latch.commit {{ LATCH_COMMIT }}
+    org.latch.npm-cli.commit {{ NPM_CLI_COMMIT }}
+    org.latch.node.version {{ NODE_VERSION }}
+
+%post
+    set -eu
+    # Build-time only; not exported to the runtime environment.
+    export DEBIAN_FRONTEND=noninteractive
+
+    #When running the container run with --bind {Path to where straces go}:/straces
+    mkdir /straces
+    #When running the container run with --bind {Path to npm packages}:/packages
+    mkdir /packages
+    mkdir /InstancePkgs
+    # GitHub adaptation: manifests are written inside the image's analyzer tree.
+    mkdir /manifests
+    ln -s /straces /latch/straces
+    ln -s /manifests /latch/manifests
+
+    apt-get update && apt-get -y install software-properties-common
+    apt-get update && add-apt-repository main
+    apt-get update && add-apt-repository universe
+    apt-get update && add-apt-repository restricted
+    apt-get update && add-apt-repository multiverse
+    apt-get update && apt-get -y install python
+    apt-get update && apt-get -y install snapd
+    apt-get update && apt-get -y install build-essential
+    apt-get update && apt-get -y install ubuntu-standard
+    apt-get update && apt-get -y install git
+    apt-get update && apt-get -y install default-jre
+    apt-get update && apt-get -y install default-jdk
+    apt-get update && apt-get -y install rustc
+    apt-get update && add-apt-repository ppa:longsleep/golang-backports
+    apt-get update && apt-get -y install golang-go
+    apt-get update && apt-get -y install cargo
+    apt-get update && apt-get -y install xterm
+    apt-get update && apt-get -y install zsh
+    apt-get update && apt-get -y install zip
+    apt-get update && apt-get -y install unzip
+    apt-get update && apt-get -y install cmdtest
+    apt-get update && apt-get -y install sudo
+    #apt-get update && apt-get -y install emscripten
+    apt-get update && apt-get -y install ticgit
+    #apt-get update && snap install dotnet-sdk
+    apt-get update && apt-get -y install ruby-factory-girl-rails
+    #apt-get update && apt-get -y install ImageMagick
+    apt-get update && apt-get -y install libmysqlclient-dev
+    apt-get update && apt-get -y install pkg-config
+    apt-get update && apt-get -y install ruby
+    apt-get update && apt-get -y install capnproto
+    apt-get update && apt-get -y install cabal-install
+    apt-get update && apt-get -y install coffeescript
+    apt-get update && apt-get -y install webpack
+    apt-get update && apt-get -y install meson
+    apt-get update && apt-get -y install python3-pip
+    #apt-get update && apt-get -y install php7.2-cli
+    apt-get update && apt-get -y install cmake
+    apt-get update && apt-get -y install erlang-base
+    apt-get update && apt-get -y install gulp
+    apt-get update && apt-get -y install fish
+    apt-get update && apt-get -y install xdg-utils
+    apt-get update && apt-get -y install maven
+    apt-get update && apt-get -y install netcat
+    apt-get update && apt-get -y install elixir
+    apt-get update && apt-get -y install lua5.2
+    #apt-get update && apt-get -y install protobuf
+    apt-get update && apt-get -y install bison
+    apt-get update && apt-get -y install xsltproc
+    apt-get update && apt-get -y install mitmproxy
+    apt-get update && apt-get -y install finch
+    apt-get update && apt-get -y install autoconf
+    apt-get update && apt-get -y install dos2unix
+    #apt-get update && apt-get -y install phantomjs
+    apt-get update && apt-get -y install alsa-utils
+    apt-get update && apt-get -y install jq
+    apt-get update && apt-get -y install jbuilder
+    apt-get update && apt-get -y install haskell-stack
+    apt-get update && apt-get -y install clang
+    apt-get update && apt-get -y install node-typescript
+    apt-get update && apt-get -y install heimdal-multidev
+    apt-get update && apt-get -y install libxml2-utils
+    #apt-get update && apt-get -y install xdg-open
+    apt-get update && apt-get -y install libwxbase3.0-dev
+
+    # GitHub adaptation: upstream ran
+    #   apt-get install -y curl && curl -sL https://deb.nodesource.com/setup_12.x | bash && apt-get install -y nodejs
+    # That script is retired. Install the official tarball into /usr, the same
+    # prefix the NodeSource package used (/usr/bin/node, /usr/lib/node_modules).
+    apt-get update && apt-get install -y curl xz-utils
+    NODE_DIST="node-v{{ NODE_VERSION }}-linux-x64"
+    curl -fsSL -o /tmp/node.tar.xz "https://nodejs.org/dist/v{{ NODE_VERSION }}/${NODE_DIST}.tar.xz"
+    echo "{{ NODE_SHA256 }}  /tmp/node.tar.xz" | sha256sum -c -
+    tar -xJf /tmp/node.tar.xz -C /usr --strip-components=1 --no-same-owner \
+      --exclude="${NODE_DIST}/CHANGELOG.md" \
+      --exclude="${NODE_DIST}/LICENSE" \
+      --exclude="${NODE_DIST}/README.md"
+    rm /tmp/node.tar.xz
+    npm install -g babel-cli@6.26.0 babel-core@6.26.3
+
+    # GitHub adaptation: the npm hook runs lifecycle scripts under /usr/bin/strace.
+    apt-get update && apt-get -y install strace
+
+    # GitHub adaptation: analyzer/parser dependencies (not shipped upstream).
+    cd /latch && npm ci --ignore-scripts --no-audit
+    apt-get clean
+
+%runscript
+    mkdir $2 && cd $2 && cp /package.json ./ && mkdir node_modules && mkdir cache && node /cli/bin/npm-cli.js config set cache ./cache && node /start.js "$1" "$3" "$4" "$5"
+
+%help
+    LATCH analysis image (GitHub Actions reproduction).
+    apptainer run --bind <straces>:/straces,<packages>:/packages -H <home> latch.sif \
+      <package spec> <work dir> <package name> <name@version> <probe collect dir>

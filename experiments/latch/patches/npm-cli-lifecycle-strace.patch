@@ -1,0 +1,70 @@
+--- a/node_modules/npm-lifecycle/index.js
++++ b/node_modules/npm-lifecycle/index.js
+@@ -307,6 +307,38 @@
+ }
+ 
+ exports._getSpawnArgs = getSpawnArgs
++
++// LATCH: reconstructed from tools/latch/readme.md and the strace layout that
++// tools/latch/analyzer/analyzer.js reads. The upstream modified file was not
++// published, so this is a reproduction, not the authors' original code.
++//
++// Each lifecycle script runs as `strace -ff -ttt -yy -o <prefix> sh -c <cmd>`.
++// -ff -o writes one file per process, named <prefix>.<pid>; the analyzer takes
++// the pid from that suffix. -ttt gives the epoch timestamps the b3 grammar
++// parses and the analyzer orders syscalls by. -yy decodes fds to paths and
++// sockets, which the syscall analyzer reads from fd arguments and results.
++const LATCH_STRACE = '/usr/bin/strace'
++const LATCH_STRACE_DIR = '/straces'
++const LATCH_SCRIPT_TIMEOUT_MS = 10 * 60 * 1000
++
++function createExec (pkg, stage, sh, args) {
++  const name = pkg._id.replace(/\//g, '~')
++  const dir = path.join(LATCH_STRACE_DIR, name)
++  const prefix = path.join(dir, name + '_' + stage)
++  fs.mkdirSync(dir, { recursive: true })
++  return {
++    prefix: prefix,
++    cmd: LATCH_STRACE,
++    args: ['-ff', '-ttt', '-yy', '-o', prefix, sh].concat(args),
++    // The analyzer reads <prefix>_finished as "successful" and
++    // <prefix>_killed as "timedOut".
++    finish: function (code, signal, timedOut) {
++      fs.writeFileSync(prefix + '_exit', 'code=' + code + ' signal=' + signal + '\n')
++      if (timedOut) fs.writeFileSync(prefix + '_killed', '')
++      else if (code === 0 && !signal) fs.writeFileSync(prefix + '_finished', '')
++    }
++  }
++}
+ 
+ function runCmd_ (cmd, pkg, env, wd, opts, stage, unsafe, uid, gid, cb_) {
+   function cb (er) {
+@@ -321,12 +353,26 @@
+   opts.log.verbose('lifecycle', logid(pkg, stage), 'CWD:', wd)
+   opts.log.silly('lifecycle', logid(pkg, stage), 'Args:', args)
+ 
+-  var proc = spawn(sh, args, conf, opts.log)
++  // LATCH: run the lifecycle script under strace instead of spawning it directly.
++  const exec = createExec(pkg, stage, sh, args)
++  opts.log.verbose('lifecycle', logid(pkg, stage), 'LATCH strace prefix:', exec.prefix)
+ 
++  var proc = spawn(exec.cmd, exec.args, conf, opts.log)
++
++  var latchTimedOut = false
++  var latchTimer = setTimeout(function () {
++    latchTimedOut = true
++    proc.kill('SIGKILL')
++  }, LATCH_SCRIPT_TIMEOUT_MS)
++
+   proc.on('error', procError)
+   proc.on('close', function (code, signal) {
++    clearTimeout(latchTimer)
++    exec.finish(code, signal, latchTimedOut)
+     opts.log.silly('lifecycle', logid(pkg, stage), 'Returned: code:', code, ' signal:', signal)
+-    if (signal) {
++    if (latchTimedOut) {
++      var er = new Error('LATCH timeout after ' + LATCH_SCRIPT_TIMEOUT_MS + 'ms')
++    } else if (signal) {
+       process.kill(process.pid, signal)
+     } else if (code) {
+       var er = new Error('Exit status ' + code)

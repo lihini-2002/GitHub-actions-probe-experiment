@@ -1,0 +1,33 @@
+--- a/analyzer/OSstate.js
++++ b/analyzer/OSstate.js
+@@ -12,7 +12,11 @@
+         euid: null,
+         rgid: null,
+         egid: null,
+-        cwd: "/home/user/Documents/research/malicious_packages/" + pkg,
++        // Reproduction plumbing: the authors' machine path stays the default;
++        // LATCH_INITIAL_CWD supplies the real lifecycle working directory.
++        cwd:
++          process.env.LATCH_INITIAL_CWD ||
++          "/home/user/Documents/research/malicious_packages/" + pkg,
+       },
+     ];
+     this.fifos = [];
+--- a/analyzer/analyzer.js
++++ b/analyzer/analyzer.js
+@@ -104,10 +104,14 @@
+               successful,
+               timedOut
+             );
+-            //this.WriteToFile(manifest, pkg.replace(/\//g, "~") + "_" + script);
++            // Reproduction plumbing: upstream left this call commented out, so the
++            // manifest was built but never persisted.
++            this.WriteToFile(manifest, pkg.replace(/\//g, "~") + "_" + script);
+             //console.timeEnd(script + " Create Manifest");
+             //console.timeEnd(script + " Total");
+           } catch (err) {
++            // Reproduction plumbing: surface the swallowed error for debugging.
++            console.error(pkg + " " + script + " analyzer_failed:", err && err.stack);
+             fs.appendFileSync(
+               scriptErrorPath,
+               pkg + " " + script + " analyzer_failed\n"

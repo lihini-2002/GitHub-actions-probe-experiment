@@ -1,0 +1,7 @@
+[submodule "tools/latch"]
+	path = tools/latch
+	url = https://github.com/elizabethwyss/Latch.git
+[submodule "tools/npm-cli"]
+	path = tools/npm-cli
+	url = https://github.com/npm/cli.git
+	shallow = true

@@ -1,0 +1,9 @@
+{
+  "name": "latch-smoke-package",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal postinstall used to check that LATCH's npm traces lifecycle scripts before the probe runs.",
+  "scripts": {
+    "postinstall": "node -e \"require('fs').readFileSync('package.json')\""
+  }
+}

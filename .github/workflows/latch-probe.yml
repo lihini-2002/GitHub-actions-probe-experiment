@@ -1,0 +1,336 @@
+name: Environment Probe - GitHub Ubuntu + LATCH
+
+# Experiment B: GitHub Ubuntu VM -> Apptainer -> LATCH image -> LATCH npm -> probe.
+# See experiments/latch/README.md for the design and every deviation from
+# upstream LATCH.
+#
+# Apptainer passes the host environment into the image (as upstream's
+# `singularity run` did), so this workflow deliberately sets no job-level
+# `env:` and never writes to $GITHUB_ENV: anything placed there would become
+# visible to the probe. Values flow between steps through step outputs, and
+# experiment labels are given only to the metadata step.
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_version:
+        description: >-
+          Node.js inside the LATCH image. 22.23.3 matches the probe's engines
+          (>=22) and Experiment A's Node 22. 12.22.12 is upstream LATCH's
+          Node 12 runtime; the probe cannot parse under it, so expect the
+          probe checks to fail.
+        type: choice
+        options:
+          - "22.23.3"
+          - "12.22.12"
+        default: "22.23.3"
+
+permissions:
+  contents: read
+
+jobs:
+  latch-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+
+    steps:
+      - name: Checkout repository and pinned LATCH sources
+        uses: actions/checkout@v4
+        with:
+          # Non-recursive on purpose: tools/latch contains a `cli` gitlink with
+          # no .gitmodules entry, which a recursive update cannot resolve.
+          # tools/npm-cli pins the commit that gitlink points to.
+          submodules: true
+
+      - name: Verify pinned LATCH sources
+        run: |
+          expect_commit() {
+            local actual
+            actual=$(git -C "$1" rev-parse HEAD)
+            if [ "$actual" != "$2" ]; then
+              echo "::error::$1 is at $actual, expected $2"
+              exit 1
+            fi
+            echo "$1 @ $actual"
+          }
+          expect_commit tools/latch a57345fba86a176bf32c888592582f194fafa5bb
+          expect_commit tools/npm-cli bd2721dbc3de13a5ba889eba50644475d80f6948
+
+          gitlink=$(git -C tools/latch ls-tree HEAD cli | awk '{print $3}')
+          if [ "$gitlink" != "$(git -C tools/npm-cli rev-parse HEAD)" ]; then
+            echo "::error::LATCH's cli gitlink ($gitlink) does not match tools/npm-cli"
+            exit 1
+          fi
+          echo "LATCH cli gitlink matches tools/npm-cli ($gitlink)"
+
+      - name: Create experiment directories
+        run: |
+          mkdir -p experiment-output/metadata/checks
+          mkdir -p experiment-output/probe
+          mkdir -p experiment-output/latch/straces
+          mkdir -p experiment-output/latch/manifests
+          mkdir -p experiment-output/latch/logs
+
+      - name: Record GitHub Actions host metadata
+        run: |
+          {
+            echo "=== TIMESTAMP ==="
+            date -u --iso-8601=seconds
+
+            echo
+            echo "=== GITHUB ACTIONS ==="
+            echo "GITHUB_WORKFLOW=$GITHUB_WORKFLOW"
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo "GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+            echo "GITHUB_SHA=$GITHUB_SHA"
+
+            echo
+            echo "=== RUNNER ==="
+            echo "RUNNER_OS=$RUNNER_OS"
+            echo "RUNNER_ARCH=$RUNNER_ARCH"
+            echo "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT"
+            echo "ImageOS=${ImageOS:-}"
+            echo "ImageVersion=${ImageVersion:-}"
+
+            echo
+            echo "=== OS ==="
+            cat /etc/os-release
+
+            echo
+            echo "=== KERNEL ==="
+            uname -a
+
+            echo
+            echo "=== USER NAMESPACES / PTRACE ==="
+            sysctl kernel.apparmor_restrict_unprivileged_userns 2>&1 || true
+            sysctl kernel.yama.ptrace_scope 2>&1 || true
+
+            echo
+            echo "=== CPU ==="
+            lscpu
+
+            echo
+            echo "=== MEMORY ==="
+            free -h
+
+            echo
+            echo "=== FILESYSTEM ==="
+            df -Th
+          } > experiment-output/metadata/github-host.txt
+
+      - name: Verify strace works on the runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y strace
+          strace --version | head -1
+          trace="$RUNNER_TEMP/strace-check.trace"
+          if ! strace -f -o "$trace" /bin/echo "hello"; then
+            echo "::error::strace could not trace /bin/echo on this runner; LATCH cannot work here"
+            exit 1
+          fi
+          if ! test -s "$trace" || ! grep -q 'execve("/bin/echo"' "$trace"; then
+            echo "::error::strace ran but produced no usable trace"
+            exit 1
+          fi
+          echo "strace prerequisite OK ($(wc -l < "$trace") lines)"
+
+      - name: Install Apptainer
+        run: |
+          # Pinned upstream release; checksum recorded when this workflow was written.
+          version=1.5.4
+          sha256=281cf9bd68f16b6f7c34a3a94d77668bc327b9c09db0412ce7890162734a97f7
+          deb="$RUNNER_TEMP/apptainer_${version}_amd64.deb"
+          curl -fsSL -o "$deb" \
+            "https://github.com/apptainer/apptainer/releases/download/v${version}/apptainer_${version}_amd64.deb"
+          echo "$sha256  $deb" | sha256sum -c -
+          # debootstrap: upstream's container.def bootstraps Ubuntu 20.04 with it.
+          sudo apt-get install -y "$deb" debootstrap
+
+      - name: Verify Apptainer
+        run: |
+          apptainer --version
+          debootstrap --version
+          # Ubuntu 24.04 restricts unprivileged user namespaces through
+          # AppArmor; the Apptainer package ships a profile that permits it.
+          if [ -f /etc/apparmor.d/apptainer ]; then
+            sudo apparmor_parser -r /etc/apparmor.d/apptainer
+            echo "Loaded AppArmor profile /etc/apparmor.d/apptainer"
+          else
+            echo "::warning::No /etc/apparmor.d/apptainer profile found"
+          fi
+          apptainer buildcfg | grep -E '^(APPTAINER_SUID_INSTALL|SINGULARITY_SUID_INSTALL)=' || true
+
+      - name: Select Node.js runtime for the LATCH image
+        id: node
+        run: |
+          case "${{ inputs.node_version }}" in
+            12.22.12) sha256=e6d052364bfa2c17da92cf31794100cfd709ba147415ddaeed2222eec9ca1469 ;;
+            22.23.3)  sha256=df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de ;;
+            *) echo "::error::Unsupported node_version"; exit 1 ;;
+          esac
+          echo "version=${{ inputs.node_version }}" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "LATCH image Node.js: ${{ inputs.node_version }}"
+
+      - name: Build LATCH image
+        run: |
+          # Build scratch space on the larger /mnt disk.
+          sudo mkdir -p /mnt/apptainer-tmp
+          df -h / /mnt
+          APPTAINER_TMPDIR=/mnt/apptainer-tmp bash experiments/latch/build-image.sh \
+            "$RUNNER_TEMP/latch-build" \
+            "$RUNNER_TEMP/latch.sif" \
+            "${{ steps.node.outputs.version }}" \
+            "${{ steps.node.outputs.sha256 }}" \
+            2>&1 | tee experiment-output/latch/logs/image-build.log
+          test -s "$RUNNER_TEMP/latch.sif" || { echo "::error::latch.sif was not produced"; exit 1; }
+          ls -lh "$RUNNER_TEMP/latch.sif"
+
+      - name: Verify LATCH image
+        run: |
+          sif="$RUNNER_TEMP/latch.sif"
+          run() { apptainer exec "$sif" "$@"; }
+
+          apptainer inspect --labels "$sif"
+          run sh -c '. /etc/os-release && echo "Image OS: $PRETTY_NAME"'
+
+          node=$(run node --version)
+          echo "Image Node.js: $node"
+          if [ "$node" != "v${{ steps.node.outputs.version }}" ]; then
+            echo "::error::Image Node.js is $node, expected v${{ steps.node.outputs.version }}"
+            exit 1
+          fi
+
+          npm_version=$(run node /cli/bin/npm-cli.js --version)
+          echo "LATCH npm: $npm_version"
+          if [ "$npm_version" != "6.14.8" ]; then
+            echo "::error::LATCH npm reports $npm_version, expected 6.14.8"
+            exit 1
+          fi
+
+          run grep -q 'function createExec' /cli/node_modules/npm-lifecycle/index.js \
+            || { echo "::error::LATCH lifecycle hook missing from /cli"; exit 1; }
+          run grep -qE '^ +this\.WriteToFile\(manifest' /latch/analyzer/analyzer.js \
+            || { echo "::error::Manifest persistence patch missing from /latch/analyzer"; exit 1; }
+
+          run strace -V | head -1
+          # ptrace must work for an unprivileged user inside the container.
+          trace="/tmp/latch-image-strace-check.trace"
+          run strace -ff -ttt -yy -o "$trace" /bin/true
+          if ! ls "$trace".* >/dev/null 2>&1; then
+            echo "::error::strace inside the LATCH image produced no trace"
+            exit 1
+          fi
+          rm -f "$trace".*
+          echo "strace works inside the LATCH image"
+
+      - name: Locate environment probe package
+        id: probe_pkg
+        run: |
+          # Same tarball Experiment A installs via package.json's file: dependency.
+          tarball=packages/npm-probing-package-0.1.0.tgz
+          test -f "$tarball" || { echo "::error::$tarball not found"; exit 1; }
+          sha256sum "$tarball"
+          script=$(tar -xOzf "$tarball" package/package.json | jq -r '.scripts.postinstall // empty')
+          if [ -z "$script" ]; then
+            echo "::error::$tarball has no postinstall script"
+            exit 1
+          fi
+          echo "postinstall: $script"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test - benign npm install through LATCH
+        run: |
+          npm pack ./experiments/latch/smoke-package --pack-destination "$RUNNER_TEMP"
+          bash experiments/latch/run-latch-single.sh \
+            "$RUNNER_TEMP/latch.sif" \
+            "$RUNNER_TEMP/latch-smoke-package-1.0.0.tgz" \
+            latch-smoke-package \
+            latch-smoke-package@1.0.0 \
+            smoke \
+            experiment-output/latch/smoke
+
+      - name: Verify smoke-test trace
+        run: bash experiments/latch/verify-latch-run.sh smoke experiment-output
+
+      - name: Remove smoke-test instance
+        run: |
+          # Leave no smoke-test state where the probe could observe it.
+          rm -rf /dev/shm/Instances/smoke /dev/shm/Instances/smoke-collect
+          rm -rf "$RUNNER_TEMP/latch-home-smoke" "$RUNNER_TEMP/latch-instancepkgs-smoke"
+
+      - name: Install environment probe through LATCH
+        id: probe_install
+        run: |
+          bash experiments/latch/run-latch-single.sh \
+            "$RUNNER_TEMP/latch.sif" \
+            "${{ steps.probe_pkg.outputs.tarball }}" \
+            npm-probing-package \
+            npm-probing-package@0.1.0 \
+            inst_0 \
+            experiment-output/latch \
+            experiment-output/probe
+
+      - name: Verify probe JSON
+        if: ${{ !cancelled() && steps.probe_install.conclusion != 'skipped' }}
+        run: bash experiments/latch/verify-latch-run.sh probe experiment-output 6.14.8
+
+      - name: Verify LATCH trace of the probe
+        if: ${{ !cancelled() && steps.probe_install.conclusion != 'skipped' }}
+        run: bash experiments/latch/verify-latch-run.sh trace experiment-output
+
+      - name: Generate LATCH manifest
+        if: ${{ !cancelled() && steps.probe_install.conclusion != 'skipped' }}
+        run: |
+          out="$GITHUB_WORKSPACE/experiment-output/latch"
+          # The upstream analyzer appends failures to analyzer/errors.txt;
+          # bind a host file over it so failures are kept as an artifact.
+          touch "$out/logs/analyzer-errors.txt"
+          apptainer exec \
+            --bind "$out/straces:/straces" \
+            --bind "$out/manifests:/manifests" \
+            --bind "$out/logs/analyzer-errors.txt:/latch/analyzer/errors.txt" \
+            --bind "$out:/latch-out" \
+            "$RUNNER_TEMP/latch.sif" \
+            node /latch/experiment/generate-manifest.js \
+              npm-probing-package@0.1.0 \
+              "$(cat "$out/logs/lifecycle-cwd.txt")" \
+              /latch-out/manifest-summary.json \
+            2>&1 | tee "$out/logs/analyzer.log"
+
+      - name: Verify LATCH manifest
+        if: ${{ !cancelled() && steps.probe_install.conclusion != 'skipped' }}
+        run: bash experiments/latch/verify-latch-run.sh manifest experiment-output
+
+      - name: Write run metadata
+        if: always()
+        env:
+          EXPERIMENT_ENV_ID: ENV-UNASSIGNED
+          EXPERIMENT_ENV_NAME: github-actions-ubuntu-latch
+          EXPERIMENT_STUDY_ROLE: "LATCH analysis condition; paired with the GitHub Actions Ubuntu VM baseline (probe.yml)"
+          EXPERIMENT_RUNNER: ubuntu-24.04
+        run: |
+          bash experiments/latch/write-metadata.sh \
+            experiment-output \
+            "$RUNNER_TEMP/latch.sif" \
+            packages/npm-probing-package-0.1.0.tgz \
+            "${{ inputs.node_version }}"
+
+          {
+            echo "### LATCH experiment checks"
+            echo
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            for f in experiment-output/metadata/checks/*.json; do
+              [ -f "$f" ] || continue
+              jq -r '.results[] | "| \(.check) | \(if .passed then "pass" else "**FAIL**" end) |"' "$f"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-actions-ubuntu-latch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: experiment-output/
+          if-no-files-found: warn

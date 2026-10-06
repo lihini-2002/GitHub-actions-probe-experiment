@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# Write experiment/run metadata for the LATCH experiment. Kept separate from
+# the probe's own report; nothing here is visible to the probe.
+#
+# Follows the layered experiment.json used by openssf-package-analysis.yml,
+# with the environment ID/name fields used by github-actions-container-probe.yml.
+# Fields that cannot be determined (e.g. the image failed to build) are null.
+#
+# Expects EXPERIMENT_ENV_ID, EXPERIMENT_ENV_NAME, EXPERIMENT_STUDY_ROLE and
+# EXPERIMENT_RUNNER in the environment.
+#
+# Usage: write-metadata.sh <out-dir> <latch.sif> <probe.tgz> <node-version>
+set -uo pipefail
+
+OUT=$1
+SIF=$2
+TARBALL=$3
+NODE_VERSION=$4
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO=$(cd "$HERE/../.." && pwd)
+
+# Run a command inside the image and print its first line, or nothing.
+in_image() {
+  [ -f "$SIF" ] || return 0
+  apptainer exec "$SIF" "$@" 2>/dev/null | head -1
+}
+check() {
+  local f="$OUT/metadata/checks/$1.json"
+  if [ -f "$f" ]; then jq -c . "$f"; else echo null; fi
+}
+check_passed() {
+  local f="$OUT/metadata/checks/$1.json"
+  if [ -f "$f" ]; then jq '.passed' "$f"; else echo false; fi
+}
+or_null() { if [ -n "$1" ]; then jq -cn --arg v "$1" '$v'; else echo null; fi; }
+
+image_sha256=""
+[ -f "$SIF" ] && image_sha256=$(sha256sum "$SIF" | cut -d' ' -f1)
+image_os=$(in_image sh -c '. /etc/os-release && echo "$PRETTY_NAME"')
+image_node=$(in_image node --version)
+image_latch_npm=$(in_image node /cli/bin/npm-cli.js --version)
+image_bundled_npm=$(in_image npm --version)
+image_strace=$(in_image strace -V)
+apptainer_version=$(apptainer --version 2>/dev/null)
+host_strace=$(strace -V 2>/dev/null | head -1)
+host_os=$( (. /etc/os-release && echo "$PRETTY_NAME") 2>/dev/null)
+
+probe_reports=$(find "$OUT/probe" -maxdepth 1 -type f -name 'install-*.json' 2>/dev/null | wc -l)
+strace_files=$(find "$OUT/latch/straces" -type f -name '*_*.[0-9]*' 2>/dev/null | grep -cE '\.[0-9]+$')
+manifests=$(find "$OUT/latch/manifests" -type f 2>/dev/null | wc -l)
+
+jq -n \
+  --arg env_id "$EXPERIMENT_ENV_ID" \
+  --arg env_name "$EXPERIMENT_ENV_NAME" \
+  --arg study_role "$EXPERIMENT_STUDY_ROLE" \
+  --arg runner "$EXPERIMENT_RUNNER" \
+  --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg run_id "${GITHUB_RUN_ID:-}" \
+  --arg run_attempt "${GITHUB_RUN_ATTEMPT:-}" \
+  --arg workflow "${GITHUB_WORKFLOW:-}" \
+  --arg repo_commit "${GITHUB_SHA:-$(git -C "$REPO" rev-parse HEAD)}" \
+  --arg arch "${RUNNER_ARCH:-}" \
+  --arg machine "$(uname -m)" \
+  --arg kernel "$(uname -r)" \
+  --arg host_os "$host_os" \
+  --argjson host_strace "$(or_null "$host_strace")" \
+  --argjson apptainer "$(or_null "$apptainer_version")" \
+  --argjson image_sha256 "$(or_null "$image_sha256")" \
+  --argjson image_os "$(or_null "$image_os")" \
+  --argjson image_node "$(or_null "$image_node")" \
+  --argjson image_latch_npm "$(or_null "$image_latch_npm")" \
+  --argjson image_bundled_npm "$(or_null "$image_bundled_npm")" \
+  --argjson image_strace "$(or_null "$image_strace")" \
+  --arg node_requested "$NODE_VERSION" \
+  --arg latch_commit "$(git -C "$REPO/tools/latch" rev-parse HEAD)" \
+  --arg npm_cli_commit "$(git -C "$REPO/tools/npm-cli" rev-parse HEAD)" \
+  --arg tarball "$(basename "$TARBALL")" \
+  --arg tarball_sha256 "$(sha256sum "$TARBALL" | cut -d' ' -f1)" \
+  --argjson probe_reports "$probe_reports" \
+  --argjson strace_files "${strace_files:-0}" \
+  --argjson manifests "$manifests" \
+  --argjson check_smoke "$(check smoke)" \
+  --argjson check_probe "$(check probe)" \
+  --argjson check_trace "$(check trace)" \
+  --argjson check_manifest "$(check manifest)" \
+  --argjson probe_ok "$(check_passed probe)" \
+  --argjson trace_ok "$(check_passed trace)" \
+  --argjson manifest_ok "$(check_passed manifest)" \
+  '{
+    experiment: $env_name,
+    environment_id: $env_id,
+    environment_name: $env_name,
+    study_role: $study_role,
+    timestamp: $timestamp,
+    run_id: $run_id,
+    run_attempt: $run_attempt,
+    workflow: $workflow,
+    repository_commit: $repo_commit,
+    host_layer: {
+      provider: "GitHub Actions",
+      runner: "GitHub-hosted",
+      os_label: $runner,
+      os: $host_os,
+      kernel: $kernel,
+      architecture: $arch,
+      machine: $machine,
+      strace_version: $host_strace
+    },
+    sandbox_layer: {
+      runtime: "Apptainer",
+      apptainer_version: $apptainer,
+      image_definition: "experiments/latch/container-github.def",
+      image_base: "Ubuntu 20.04 (focal) via debootstrap, as upstream singularity/container.def",
+      image_os: $image_os,
+      image_sha256: $image_sha256,
+      strace_version: $image_strace
+    },
+    scanner_layer: {
+      tool: "LATCH",
+      upstream: "https://github.com/elizabethwyss/Latch",
+      latch_commit: $latch_commit,
+      npm_cli_upstream: "https://github.com/npm/cli",
+      npm_cli_commit: $npm_cli_commit,
+      latch_mode: "analysis: lifecycle scripts run under strace, manifests generated by analyzer/; AppArmor enforcement not used",
+      latch_npm_version: $image_latch_npm,
+      node_version_requested: $node_requested,
+      node_version: $image_node,
+      node_matches_upstream_major: ($node_requested | startswith("12.")),
+      image_bundled_npm_version: $image_bundled_npm,
+      modified_from_stock: true,
+      modifications: [
+        "npm-lifecycle hook reconstructed (upstream modified file unpublished): experiments/latch/patches/npm-cli-lifecycle-strace.patch",
+        "analyzer persists manifests (upstream WriteToFile call commented out): experiments/latch/patches/latch-analyzer-reproduction.patch",
+        "analyzer initial cwd overridable instead of the authors machine path: experiments/latch/patches/latch-analyzer-reproduction.patch",
+        "analyzer logs swallowed exceptions to stderr: experiments/latch/patches/latch-analyzer-reproduction.patch",
+        "Node.js from pinned nodejs.org tarball instead of retired NodeSource setup_12.x"
+      ]
+    },
+    package_layer: {
+      ecosystem: "npm",
+      package: "npm-probing-package",
+      version: "0.1.0",
+      source: "local-tarball",
+      tarball: $tarball,
+      tarball_sha256: $tarball_sha256
+    },
+    outcome: {
+      probe_output_recovered: $probe_ok,
+      latch_traces_recovered: $trace_ok,
+      manifest_generated: $manifest_ok,
+      probe_reports_found: $probe_reports,
+      strace_files_found: $strace_files,
+      manifests_found: $manifests,
+      checks: {
+        smoke: $check_smoke,
+        probe: $check_probe,
+        trace: $check_trace,
+        manifest: $check_manifest
+      }
+    }
+  }' > "$OUT/metadata/experiment.json"
+
+cat "$OUT/metadata/experiment.json"
