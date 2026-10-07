@@ -162,8 +162,17 @@ case "$CHECK" in
     status_counts=null
     [ -n "$report" ] && status_counts=$(jq -c '[.properties[].status] | group_by(.) | map({key: .[0], value: length}) | from_entries' "$report" 2>/dev/null || echo null)
 
+    outside=$(path_of probe_ran_outside_sandbox)
+    # Packj reports a signal-killed strace as "installation error (-<signal>)".
+    tracer_signal=$(sed -nE 's/^Failed: installation error \((-[0-9]+)\)!$/\1/p' <<<"$packj_failed")
+
     if [ "$sandbox_ok" != true ]; then
-      outcome=infrastructure_failure
+      if [ "$outside" = true ]; then
+        # Packj's tracer failed and npm finished unconfined: not sandbox data.
+        outcome=sandbox_failed_package_ran_outside
+      else
+        outcome=infrastructure_failure
+      fi
     elif [ "$lifecycle_attempted" != true ]; then
       # Packj ran, but the probe's lifecycle script never started.
       if [ "$blocked" = true ] || [ -n "$packj_failed" ]; then
@@ -203,8 +212,12 @@ case "$CHECK" in
       --argjson not_allowed "$not_allowed" \
       --arg packj_failed "$packj_failed" \
       --argjson status_counts "$status_counts" \
+      --argjson outside "${outside:-false}" \
+      --arg tracer_signal "$tracer_signal" \
       '{outcome: $outcome, experiment_valid: $valid,
         packj_sandbox_active: $sandbox_ok,
+        packj_tracer_killed_by_signal: (if $tracer_signal == "" then null else ($tracer_signal | tonumber | -.) end),
+        probe_ran_outside_sandbox: $outside,
         probe_lifecycle_attempted: $lifecycle_attempted,
         probe_lifecycle_result: (if $lifecycle_result == "" then null else $lifecycle_result end),
         probe_output_recovered: $probe_output,
@@ -219,9 +232,14 @@ case "$CHECK" in
     cat "$OUT/metadata/outcome.json"
     echo "Outcome: $outcome"
     if [ "$valid" != true ]; then
-      [ "$outcome" = sandbox_prevented_lifecycle ] \
-        && echo "::error::Packj sandbox worked but prevented the probe's postinstall from running (not an infrastructure failure)" \
-        || echo "::error::No valid experiment outcome ($outcome)"
+      case "$outcome" in
+        sandbox_prevented_lifecycle)
+          echo "::error::Packj sandbox worked but prevented the probe's postinstall from running (not an infrastructure failure)" ;;
+        sandbox_failed_package_ran_outside)
+          echo "::error::Packj's sandbox failed${tracer_signal:+ (strace killed by signal ${tracer_signal#-})} and npm ran the probe OUTSIDE the sandbox; see probe-outside-sandbox/ and packj/diagnostics/" ;;
+        *)
+          echo "::error::No valid experiment outcome ($outcome)" ;;
+      esac
       exit 1
     fi
     exit 0

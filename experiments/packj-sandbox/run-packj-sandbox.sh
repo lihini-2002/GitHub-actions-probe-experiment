@@ -152,10 +152,23 @@ echo "Packj exit status: $status"
 # Without a review (e.g. npm failed), Packj exits before deleting the layer.
 [ "$menu_reached" = true ] || snapshot
 
-# After C, Packj copied new files to the host.
-committed_report=""
+# After C, Packj copied new files to the host. Without a review, any report on
+# the host was written OUTSIDE the sandbox: if Packj's strace dies (e.g. SIGSEGV),
+# its tracees are detached and npm carries on unconfined. Such a report is kept
+# apart, as evidence of that, and never counted as sandbox output.
+host_report=""
+outside_sandbox=false
 if ls "$WORK/node_modules/$PKG_NAME/results"/install-*.json >/dev/null 2>&1; then
-  committed_report=$(ls "$WORK/node_modules/$PKG_NAME/results"/install-*.json | head -1)
+  host_report=$(ls "$WORK/node_modules/$PKG_NAME/results"/install-*.json | head -1)
+  if [ "$menu_reached" != true ]; then
+    outside_sandbox=true
+    mkdir -p "$OUT/probe-outside-sandbox"
+    cp "$WORK/node_modules/$PKG_NAME/results"/install-*.json "$OUT/probe-outside-sandbox/"
+    for f in package.json package-lock.json; do
+      [ -f "$WORK/$f" ] && cp "$WORK/$f" "$OUT/probe-outside-sandbox/host-work-$f"
+    done
+    echo "::warning::Packj did not complete, but npm installed the probe on the host and its postinstall ran outside the sandbox (report kept in probe-outside-sandbox/)"
+  fi
 fi
 
 jq -n \
@@ -168,13 +181,15 @@ jq -n \
   --argjson timed_out "$timed_out" \
   --arg answer "$answer" \
   --arg probe_report_source "$(cat "$LOGS/probe-report-source.txt" 2>/dev/null)" \
-  --arg committed_report "$committed_report" \
+  --arg host_report "$host_report" \
+  --argjson outside_sandbox "$outside_sandbox" \
   --argjson packj_exit_status "$status" \
   '{input: $input, work_dir: $work_dir, node_bin: $node_bin,
     sandbox_dir: $sandbox_dir, sandbox_root: $sandbox_root,
     review_menu_reached: $menu_reached, timed_out: $timed_out, review_answer: $answer,
     probe_report_source_dir: $probe_report_source,
-    committed_probe_report: $committed_report,
+    host_probe_report: $host_report,
+    probe_ran_outside_sandbox: $outside_sandbox,
     packj_exit_status: $packj_exit_status}' > "$LOGS/run-paths.json"
 cat "$LOGS/run-paths.json"
 

@@ -270,6 +270,17 @@ jobs:
         if: ${{ !cancelled() && steps.sandbox.conclusion != 'skipped' }}
         run: bash experiments/packj-sandbox/verify-sandbox-run.sh classify experiment-output
 
+      # Only after a failure, and only after the probe has run: reproduces Packj's
+      # sandboxed strace on simple commands to locate a crash. Output goes to
+      # experiment-output/packj/diagnostics/ and is not part of the measurement.
+      - name: Diagnose Packj sandbox failure
+        if: ${{ failure() && steps.sandbox.conclusion == 'success' }}
+        run: |
+          bash experiments/packj-sandbox/diagnose-sandbox-crash.sh \
+            "$RUNNER_TEMP/packj-build" \
+            "${{ steps.node.outputs.bin }}" \
+            experiment-output
+
       - name: Collect run metadata
         if: always()
         env:
