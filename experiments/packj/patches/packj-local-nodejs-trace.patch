@@ -1,0 +1,82 @@
+diff --git a/packj/audit/main.py b/packj/audit/main.py
+index e3853fb..2929a04 100644
+--- a/packj/audit/main.py
++++ b/packj/audit/main.py
+@@ -593,6 +593,9 @@ def analyze_repo_code(repo_data, reason, risks, report):
+ 		return risks, report, reason
+ 
+ def analyze_repo_url(pm_proxy, pkg_name, ver_str, pkg_info, ver_info, risks, report):
++	# Experiment patch: get_repo() raises for packages without "repository";
++	# the except branch below then left repo_url unbound and aborted the audit.
++	repo_url = None
+ 	try:
+ 		msg_info('Checking repo URL...', end='', flush=True)
+ 		popular_hosting_services = (
+@@ -1083,7 +1086,7 @@ def audit(pm_args, pkg_name, ver_str, report_dir, extra_args, config):
+ 
+ 	# download package
+ 	filepath = None
+-	if not os.path.isdir(pkg_name):
++	if not (os.path.isdir(pkg_name) or (pm_name == 'local_nodejs' and os.path.isfile(pkg_name))):
+ 		try:
+ 			msg_info(
+ 				f"Downloading package from {pm_name}...",
+diff --git a/packj/audit/pm_proxy/local_nodejs.py b/packj/audit/pm_proxy/local_nodejs.py
+index 4533e9b..7bf266b 100644
+--- a/packj/audit/pm_proxy/local_nodejs.py
++++ b/packj/audit/pm_proxy/local_nodejs.py
+@@ -33,7 +33,24 @@ class LocalNodeJSProxy(PackageManagerProxy):
+ 	def get_downloads(self, pkg_name, pkg_info):
+ 		return None
+ 
++	def _is_tarball(self, pkg_name):
++		return os.path.isfile(pkg_name) and pkg_name.endswith('.tgz')
++
++	def _read_tarball_member(self, pkg_name, member):
++		# Experiment patch: npm tarballs keep files under package/
++		import tarfile
++		with tarfile.open(pkg_name, 'r:gz') as tar:
++			return tar.extractfile(f'package/{member}').read().decode('utf-8')
++
+ 	def get_metadata(self, pkg_name, pkg_version=None):
++		if self._is_tarball(pkg_name):
++			try:
++				pkg_info = json.loads(self._read_tarball_member(pkg_name, 'package.json'))
++			except Exception as e:
++				logging.debug("fail in get_metadata for tarball %s: %s", pkg_name, str(e))
++				pkg_info = None
++			return pkg_name, pkg_info
++
+ 		# local package, get metadata from package.json
+ 		pkg_json_path = os.path.join(pkg_name, 'package.json')
+ 		assert os.path.isdir(pkg_name) and os.path.isfile(pkg_json_path), 'invalid package path or package.json is not found'
+@@ -82,6 +99,11 @@ class LocalNodeJSProxy(PackageManagerProxy):
+ 			return None
+ 
+ 	def get_readme(self, pkg_name, ver_str=None, pkg_info=None):
++		if self._is_tarball(pkg_name):
++			try:
++				return self._read_tarball_member(pkg_name, 'README.md')
++			except KeyError:
++				return None
+ 		readme_path = os.path.join(pkg_name, 'README.md')
+ 		if not os.path.isfile(readme_path):
+ 			return None
+diff --git a/packj/audit/pm_util.py b/packj/audit/pm_util.py
+index 06e05c3..f506e75 100644
+--- a/packj/audit/pm_util.py
++++ b/packj/audit/pm_util.py
+@@ -9,6 +9,13 @@ def get_pm_install_cmd(pm_enum, pkg_name, ver_str, quiet=True):
+ 		base_cmd = f'npm install'
+ 		quiet_args = ' --silent --no-progress --no-update-notifier '
+ 		ver_cmd = f'@{ver_str}'
++	elif pm_enum == PackageManagerEnum.local_nodejs:
++		# Experiment patch: install a local package (.tgz or directory) with the
++		# same npm command as the npm branch. The path already identifies the
++		# version, so no @<ver> suffix is added.
++		base_cmd = f'npm install'
++		quiet_args = ' --silent --no-progress --no-update-notifier '
++		ver_cmd = ''
+ 	elif pm_enum == PackageManagerEnum.rubygems:
+ 		base_cmd = 'gem install --user'
+ 		quiet_args = ' --silent '
