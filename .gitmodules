@@ -5,3 +5,6 @@
 	path = tools/npm-cli
 	url = https://github.com/npm/cli.git
 	shallow = true
+[submodule "tools/packj"]
+	path = tools/packj
+	url = https://github.com/ossillate-inc/packj.git
