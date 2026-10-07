@@ -45,6 +45,7 @@ run_case() {
 run_case control-true          no  /bin/true
 run_case control-npm-version   no  npm --version
 run_case sandbox-true          yes /bin/true
+run_case sandbox-usr-bin-true  yes /usr/bin/true
 run_case sandbox-ls-tmp        yes /bin/ls /tmp
 run_case sandbox-sh            yes /bin/sh -c 'echo hi > /tmp/packj-diag-sh.txt'
 run_case sandbox-node          yes node -e 'require("fs").readdirSync("/tmp")'
@@ -59,8 +60,9 @@ ld -shared -L"$SBOX" -lstrace -ldl -o "$WORK/libsbox-unstripped.so" "$SBOX/sandb
 {
   echo "=== faults symbolised (ip - mapping base) ==="
   # Kernel formats: "in lib[<start>+<size>]" (old) or "in lib[<pgoff>,<start>+<size>]" (6.x).
-  grep -oE 'ip [0-9a-f]+ .* in [^ ]+\[([0-9a-f]+,)?[0-9a-f]+\+[0-9a-f]+\]' "$DIAG/dmesg.txt" | sort -u | while read -r line; do
-    ip=$(sed -E 's/^ip ([0-9a-f]+).*/\1/' <<<"$line")
+  # "segfault at … ip <addr> …" and "traps: … ip:<addr> …" both occur.
+  grep -oE 'ip[ :][0-9a-f]+ .* in [^ ]+\[([0-9a-f]+,)?[0-9a-f]+\+[0-9a-f]+\]' "$DIAG/dmesg.txt" | sort -u | while read -r line; do
+    ip=$(sed -E 's/^ip[ :]([0-9a-f]+).*/\1/' <<<"$line")
     lib=$(sed -E 's/.* in ([^[]+)\[.*/\1/' <<<"$line")
     inner=$(sed -E 's/.*\[([^]]+)\]$/\1/' <<<"$line")
     pgoff=0

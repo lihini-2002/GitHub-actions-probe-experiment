@@ -1,0 +1,41 @@
+diff --git a/packj/sandbox/Makefile b/packj/sandbox/Makefile
+index 82a4a3c..21bb0e3 100644
+--- a/packj/sandbox/Makefile
++++ b/packj/sandbox/Makefile
+@@ -8,12 +8,17 @@ STRIP := strip
+ %.o : %.c
+ 	$(CC) $(CFLAGS) -o $@ $^
+ 
+-OBJS := sandbox.o
++OBJS := sandbox.o table-pad.o
+ 
+ all: $(OBJS)
+ 	$(LD) $(LDFLAGS) -o $(TARGET) $^
+ 	$(STRIP) $(TARGET)
+ 
++# Experiment patch: zero entries after sandbox.o's syscall table (see table-pad.s).
++# Defined after 'all' so 'all' stays the default goal.
++table-pad.o : table-pad.s
++	$(AS) -o $@ $<
++
+ clean:
+ 	rm -f $(TARGET)
+ 
+diff --git a/packj/sandbox/table-pad.s b/packj/sandbox/table-pad.s
+new file mode 100644
+index 0000000..1e021b7
+--- /dev/null
++++ b/packj/sandbox/table-pad.s
+@@ -0,0 +1,12 @@
++# Experiment patch: zero padding linked directly after sandbox.o.
++#
++# sandbox.o indexes a 346-entry syscall handler table (its .data.rel.ro) by
++# tcp->scno in packj_syscall_enter/packj_syscall_exit without a bounds check.
++# Syscalls numbered >= 346 (clone3, close_range, openat2, faccessat2, ...)
++# read past the table into .dynamic/.got/.got.plt and jump to an unrelated
++# pointer (SIGSEGV in strace, observed on GitHub ubuntu-24.04). This section
++# is placed right after the table so those lookups read NULL, which the blob
++# already treats as "no handler for this syscall".
++	.section .data.rel.ro,"aw"
++	.balign 8
++	.zero 8192	# 1024 entries: syscall numbers 346..1369

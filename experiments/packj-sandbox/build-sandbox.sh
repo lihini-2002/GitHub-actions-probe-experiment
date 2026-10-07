@@ -4,9 +4,8 @@
 # (packj/sandbox/README.md, Dockerfile, setup.py): `./install.sh -v` in the
 # sandbox directory. That script clones strace v5.19, builds it as
 # libstrace.so plus an `strace` executable, and links Packj's prebuilt
-# sandbox.o into libsbox.so. The only change is one configure flag in
-# install.sh (patches/packj-sandbox-strace-bundled-headers.patch); main.py,
-# sandbox.o and the Makefile are upstream's.
+# sandbox.o into libsbox.so. Two compatibility patches (below and README);
+# main.py, the sandbox.o code and the policy are upstream's.
 #
 # Usage: build-sandbox.sh <packj-build-dir> <log-file>
 set -euo pipefail
@@ -25,12 +24,20 @@ if [ -e "$STRACE_SRC" ]; then
   exit 1
 fi
 
-# Compatibility patch (see README): strace v5.19 does not compile against
-# Ubuntu 24.04's kernel headers; build it against its own bundled headers.
-PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/packj-sandbox-strace-bundled-headers.patch"
-(cd "$BUILD/packj" && git apply --verbose "$PATCH")
+# Compatibility patches (see README):
+#  1. strace v5.19 does not compile against Ubuntu 24.04's kernel headers;
+#     build it against its own bundled headers.
+#  2. sandbox.o indexes its 346-entry syscall table without a bounds check;
+#     link zeroed entries after it so syscalls >= 346 find "no handler"
+#     instead of jumping through .got.plt (SIGSEGV on the runner).
+PATCHES="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches"
+for p in packj-sandbox-strace-bundled-headers.patch packj-sandbox-syscall-table-pad.patch; do
+  (cd "$BUILD/packj" && git apply --verbose "$PATCHES/$p")
+done
 grep -q -- '--enable-bundled=yes' "$SBOX/install.sh" \
   || { echo "::error::Patch did not apply to install.sh"; exit 1; }
+grep -q '^OBJS := sandbox.o table-pad.o$' "$SBOX/Makefile" \
+  || { echo "::error::Patch did not apply to the sandbox Makefile"; exit 1; }
 
 # install.sh must be run from its own directory, and needs -v under its own
 # `set -u` (it reads "$1" unconditionally).
@@ -53,4 +60,12 @@ if [ "$actual" != "$STRACE_COMMIT" ]; then
   exit 1
 fi
 echo "strace source: $actual (v5.19)"
+
+# sandbox.o's handler table is 0xad0 bytes; the padding must follow it.
+relro=$(readelf -S -W "$SBOX/libsbox.so" | awk '{for (i = 1; i <= NF; i++) if ($i == ".data.rel.ro") print $(i + 4)}')
+if [ -z "$relro" ] || [ $((16#$relro)) -lt $((0xad0 + 8192)) ]; then
+  echo "::error::libsbox.so .data.rel.ro is 0x${relro:-?} bytes; expected the 0xad0-byte table plus 8192 bytes of padding"
+  exit 1
+fi
+echo "libsbox.so .data.rel.ro: 0x$relro bytes (handler table 0xad0 + padding)"
 ls -la "$SBOX"

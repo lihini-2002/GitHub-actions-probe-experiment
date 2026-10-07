@@ -96,16 +96,29 @@ npm command is the plain documented form, without the quiet flags Packj's trace 
 
 ## Compatibility patches
 
-One, in the **build** of Packj's sandbox tool:
-`patches/packj-sandbox-strace-bundled-headers.patch`. `build-sandbox.sh` applies it to the
-exported copy; `tools/packj` is never edited.
+Two, both in the **build** of Packj's sandbox tool. `build-sandbox.sh` applies them to the
+exported copy; `tools/packj` is never edited. Neither touches `sandbox/main.py`, the code in
+`sandbox.o`, or the policy.
+
+### 1. `patches/packj-sandbox-strace-bundled-headers.patch`
 
 | | |
 | --- | --- |
 | **Problem** | Packj's `install.sh` builds strace **v5.19** (2022). On Ubuntu 24.04 (GCC 13.3, `linux-libc-dev` 6.8) it fails with `Failed to build strace`. The real error, kept by rerunning the same steps: `xlat/btrfs_key_types.h:167: error: 'BTRFS_EXTENT_REF_V0_KEY' undeclared`. Kernel 6.x headers removed that constant. strace's configure defaults to `--enable-bundled=check`, which picks the system headers when they are newer than 5.19. |
 | **Change** | One flag on install.sh's strace `configure` line: `--enable-bundled=yes`. strace is then compiled against the Linux UAPI headers bundled in its own 5.19 source tree, which define the constant (`bundled/linux/include/uapi/linux/btrfs_tree.h`). |
-| **Not changed** | strace version/source, `sandbox/main.py`, `sandbox.o`, the Makefile, `libsbox.so` linking, the policy, the run command. |
+| **Not changed** | strace version/source, `sandbox/main.py`, `sandbox.o`, the policy, the run command. |
 | **Effect on the probe** | None expected on what the sandbox enforces. The headers only decide how strace *decodes* syscall arguments for display (constant names, struct layouts). Interception, path rewriting and kills come from ptrace and `sandbox.o`. Newer kernel features unknown to the 5.19 headers would be decoded as raw numbers, as they would be by any strace 5.19 build. |
+
+### 2. `patches/packj-sandbox-syscall-table-pad.patch`
+
+Found from the first two GitHub runs (37591778929, 37593610922) and `diagnose-sandbox-crash.sh`.
+
+| | |
+| --- | --- |
+| **Problem** | With patch 1 only, Packj printed `Failed: installation error (-11)!`: its strace died of SIGSEGV as soon as npm ran. The kernel logged a general-protection fault in `libc.so.6` (`__getdelim`). gdb: `__getdelim (lineptr=tcp, …)` ← `syscall_entering_finish` (`sandbox.o` `main.c:90`) ← strace `trace_syscall`. Disassembly of `sandbox.o`: `packj_syscall_enter` and `packj_syscall_exit` do `handler = table[tcp->scno]; if (handler) handler(tcp)`, where the table (`sandbox.o`'s `.data.rel.ro`) has 346 entries (0xad0 bytes) and there is **no bounds check**. Every x86-64 syscall added since (`clone3` 435, `close_range` 436, `openat2` 437, `faccessat2` 439, `futex_waitv` 449, `fchmodat2` 452, …) reads past the table. In the linked `libsbox.so` the table is followed by `.dynamic`, `.got` and `.got.plt` (same layout with Ubuntu 22.04's ld 2.38, upstream's Dockerfile base, and 24.04's ld 2.42), so those syscalls jump through a libc pointer with strace's `tcp` as argument. This is a latent upstream bug that modern glibc/Node trigger. |
+| **Change** | A new 12-line `table-pad.s` emits 8192 zero bytes in `.data.rel.ro`, and the Makefile links it directly after `sandbox.o` (`OBJS := sandbox.o table-pad.o`). Table lookups for syscalls 346–1369 then read NULL, which the blob itself treats as "no handler". `build-sandbox.sh` checks that `libsbox.so`'s `.data.rel.ro` is 0xad0 + 8192 bytes. |
+| **Not changed** | `sandbox.o`'s code and its 346 table entries (94 handlers), `main.py`, the policy, strace. |
+| **Effect on the probe** | Syscalls ≥ 346 are passed through **without Packj interposition**, as Packj already does for the 252 syscalls below 346 that it has no handler for. Packj does not rewrite or hide paths given to `openat2`, `faccessat2` or `fchmodat2`, and does not see `clone3`. Without the patch, the first such syscall crashes strace, and npm then runs entirely outside the sandbox (outcome `sandbox_failed_package_ran_outside`). Node's `fs.access`/`fs.stat`/`open` use `access`/`statx`/`openat` (21/332/257), which remain interposed. |
 
 Local tarballs needed no patch (see "The command"). The trace experiment's patch
 (`experiments/packj/patches/…`) is still applied by the shared install script, but it changes only
@@ -121,6 +134,7 @@ Local tarballs needed no patch (see "The command"). The trace experiment's patch
 | `sandbox_blocked_probe_behavior` | sandbox active, postinstall attempted, Packj recorded blocks (`,BLOCK` events, kills, "not allowed"); probe JSON preserved if written | pass |
 | `sandbox_prevented_lifecycle` | Packj worked but the postinstall never started (e.g. npm killed by a network rule) | fail, labelled as **not** an infrastructure failure |
 | `probe_checks_failed` / `lifecycle_not_reached_unexplained` | lifecycle evidence without a passing probe report and no recorded block, or no lifecycle and no block | fail |
+| `sandbox_failed_package_ran_outside` | Packj's sandbox failed (e.g. its strace died) and npm went on to install the probe **on the host, unconfined**. That report is kept in `probe-outside-sandbox/`, never in `probe/` | fail |
 | `infrastructure_failure` | Packj's sandbox did not start (no sandbox dir, profile, event log, or strace summary) | fail |
 
 Filesystem `hide` rules are not logged by Packj. Their effect shows up only in the probe's own
@@ -131,6 +145,8 @@ statuses (`absent`, `permission_denied`, …), which are counted in `probe_statu
 ```text
 probe/install-<uuid>.json                 probe report, copied from the sandbox layer
 probe/partial/install-<uuid>.json.tmp     only if the report was started but not completed
+probe-outside-sandbox/                    only if Packj failed but npm still ran the probe on the host
+packj/diagnostics/                        only after a failure: diagnose-sandbox-crash.sh output
 packj/sandbox.log                         Packj console output (review summary, Failed: …)
 packj/activity/root_*.csv                 Packj sandbox event log (open/connect, ALLOW/BLOCK)
 packj/activity/trace_*.log                Packj's strace -fc syscall summary

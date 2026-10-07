@@ -80,6 +80,7 @@ jq -n \
   --arg packj_commit "$(git -C "$REPO/tools/packj" rev-parse HEAD 2>/dev/null)" \
   --argjson policy_sha "$(or_null "$(sha "$OUT/packj/policy/packj.yaml")")" \
   --argjson sandbox_patch_sha "$(or_null "$(sha "$HERE/patches/packj-sandbox-strace-bundled-headers.patch")")" \
+  --argjson table_pad_sha "$(or_null "$(sha "$HERE/patches/packj-sandbox-syscall-table-pad.patch")")" \
   --argjson profile "$(or_null "${profile:+packj/policy/$(basename "$profile")}")" \
   --argjson input "$(or_null "$input")" \
   --argjson answer "$(or_null "$answer")" \
@@ -140,10 +141,14 @@ jq -n \
       trace_mode_used: false,
       packj_tree_patch: "experiments/packj/patches/packj-local-nodejs-trace.patch (applied by the shared install script; touches packj/audit only, not packj/sandbox)",
       sandbox_modified_from_stock: true,
-      sandbox_patch: "experiments/packj-sandbox/patches/packj-sandbox-strace-bundled-headers.patch",
-      sandbox_patch_sha256: $sandbox_patch_sha,
+      sandbox_patches: {
+        "experiments/packj-sandbox/patches/packj-sandbox-strace-bundled-headers.patch": $sandbox_patch_sha,
+        "experiments/packj-sandbox/patches/packj-sandbox-syscall-table-pad.patch": $table_pad_sha
+      },
       sandbox_modifications: [
-        "install.sh configures strace v5.19 with --enable-bundled=yes (build against strace 5.19 bundled kernel UAPI headers; it does not compile against Ubuntu 24.04 linux-libc-dev 6.8: BTRFS_EXTENT_REF_V0_KEY undeclared). main.py, sandbox.o, Makefile and the policy are unchanged."
+        "install.sh configures strace v5.19 with --enable-bundled=yes (build against strace 5.19 bundled kernel UAPI headers; it does not compile against Ubuntu 24.04 linux-libc-dev 6.8: BTRFS_EXTENT_REF_V0_KEY undeclared).",
+        "libsbox.so is linked with 8192 zero bytes after sandbox.o's 346-entry syscall handler table (Makefile + table-pad.s). sandbox.o indexes the table by syscall number without a bounds check; syscalls >= 346 (clone3, close_range, openat2, faccessat2, ...) otherwise jump through .got.plt and crash strace (SIGSEGV observed on the runner). With the padding they read NULL, the blob's own 'no handler' value, and pass through without Packj interposition, like the 252 unhooked syscalls below 346.",
+        "main.py, sandbox.o code and the policy are unchanged."
       ]
     },
     package_layer: {
