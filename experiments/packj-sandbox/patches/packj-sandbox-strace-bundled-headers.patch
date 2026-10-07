@@ -1,0 +1,13 @@
+diff --git a/packj/sandbox/install.sh b/packj/sandbox/install.sh
+index 70de29e..3ad01bd 100755
+--- a/packj/sandbox/install.sh
++++ b/packj/sandbox/install.sh
+@@ -74,7 +74,7 @@ else
+ 
+ 	# Configure
+ 	echo -n "	[+] Configuring strace (est: 2mins)..."
+-	CFLAGS='-fPIC' run_command ./configure --enable-mpers=no --with-libselinux=no
++	CFLAGS='-fPIC' run_command ./configure --enable-mpers=no --with-libselinux=no --enable-bundled=yes
+ 	if [ $? -ne 0 ]; then
+ 		rm -rf $tmpdir
+ 		echo "Failed"

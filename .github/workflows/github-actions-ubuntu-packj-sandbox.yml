@@ -1,0 +1,306 @@
+name: Environment Probe - GitHub Ubuntu + Packj Sandbox
+
+# GitHub Ubuntu VM -> `packj sandbox npm install <tarball>` -> probe postinstall.
+# See experiments/packj-sandbox/README.md for the design, the policy and every
+# deviation from upstream. Packj `audit --trace` is not run here; it is the
+# separate github-actions-ubuntu-packj-trace.yml experiment.
+#
+# Packj's sandbox runs npm with its own environment, which is the step's
+# environment. As in the other Packj and LATCH workflows, this workflow sets no
+# job-level `env:` and never writes to $GITHUB_ENV or $GITHUB_PATH. Experiment
+# labels are given only to the metadata step.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  packj-sandbox-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch pinned Packj sources
+        run: |
+          # Only this submodule: see latch-probe.yml for why actions/checkout
+          # `submodules:` is not used in this repository.
+          git submodule update --init --depth 1 tools/packj
+
+      - name: Verify pinned Packj sources
+        run: |
+          # Same commit as github-actions-ubuntu-packj-trace.yml.
+          expected=dfd2c70c4b6dde0327888d62fa7d3df0661d0dfc
+          actual=$(git -C tools/packj rev-parse HEAD)
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::tools/packj is at $actual, expected $expected"
+            exit 1
+          fi
+          echo "tools/packj @ $actual"
+
+      - name: Create experiment directories
+        run: |
+          mkdir -p experiment-output/metadata/checks
+          mkdir -p experiment-output/probe
+          mkdir -p experiment-output/packj/activity
+          mkdir -p experiment-output/packj/policy
+          mkdir -p experiment-output/packj/logs
+
+      - name: Inspect environment versions
+        run: |
+          {
+            echo "=== TIMESTAMP ==="
+            date -u --iso-8601=seconds
+
+            echo
+            echo "=== GITHUB ACTIONS ==="
+            echo "GITHUB_WORKFLOW=$GITHUB_WORKFLOW"
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo "GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+            echo "GITHUB_SHA=$GITHUB_SHA"
+
+            echo
+            echo "=== RUNNER ==="
+            echo "RUNNER_OS=$RUNNER_OS"
+            echo "RUNNER_ARCH=$RUNNER_ARCH"
+            echo "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT"
+            echo "ImageOS=${ImageOS:-}"
+            echo "ImageVersion=${ImageVersion:-}"
+
+            echo
+            echo "=== OS ==="
+            cat /etc/os-release
+
+            echo
+            echo "=== KERNEL ==="
+            uname -a
+
+            echo
+            echo "=== PTRACE ==="
+            sysctl kernel.yama.ptrace_scope 2>&1 || true
+
+            echo
+            echo "=== TOOLS ==="
+            echo "runner node $(node --version 2>&1) at $(command -v node)"
+            echo "runner npm $(npm --version 2>&1)"
+            echo "system python3 $(python3 --version 2>&1)"
+            echo "gcc $(gcc --version | sed -n 1p)"
+            command -v strace >/dev/null && strace --version | sed -n 1p || echo "strace not installed yet"
+
+            echo
+            echo "=== CPU ==="
+            lscpu
+
+            echo
+            echo "=== MEMORY ==="
+            free -h
+
+            echo
+            echo "=== FILESYSTEM ==="
+            df -Th
+          } > experiment-output/metadata/github-host.txt
+          cat experiment-output/metadata/github-host.txt
+
+      - name: Verify strace works on the runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y strace
+          strace --version | sed -n 1p
+          trace="$RUNNER_TEMP/packj-sandbox-test.trace"
+          if ! strace -f -o "$trace" /bin/echo "hello"; then
+            echo "::error::strace could not trace /bin/echo on this runner; Packj sandbox cannot work here"
+            exit 1
+          fi
+          if ! test -s "$trace" || ! grep -q 'execve("/bin/echo"' "$trace"; then
+            echo "::error::strace ran but produced no usable trace"
+            exit 1
+          fi
+          echo "strace prerequisite OK ($(wc -l < "$trace") lines)"
+          rm -f "$trace"
+
+      - name: Select Python 3.10 from the runner tool cache
+        id: python
+        run: |
+          # As in the trace experiment: Packj's pinned Python packages need
+          # Python 3.10; setup-python would export variables the probe sees.
+          py=$(ls -d "$RUNNER_TOOL_CACHE"/Python/3.10.*/x64/bin/python3.10 2>/dev/null | sort -V | tail -1)
+          if [ -z "$py" ]; then
+            echo "::error::No Python 3.10 in $RUNNER_TOOL_CACHE/Python"
+            ls "$RUNNER_TOOL_CACHE/Python" || true
+            exit 1
+          fi
+          "$py" --version
+          echo "path=$py" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Packj
+        run: |
+          # Same script, constraints and Packj tree as the trace experiment.
+          sudo apt-get install -y libmagic1t64
+          bash experiments/packj/install-packj.sh \
+            "${{ steps.python.outputs.path }}" \
+            "$RUNNER_TEMP/packj-build" \
+            2>&1 | tee experiment-output/packj/logs/packj-install.log
+
+      - name: Build Packj sandbox tool
+        run: |
+          # Prerequisites from packj/sandbox/README.md ("sudo apt install
+          # autoconf build-essential"); automake and gawk are needed by
+          # strace's ./bootstrap, as in upstream's Dockerfile. build-sandbox.sh
+          # applies one compatibility flag to install.sh (see README).
+          sudo apt-get install -y autoconf automake build-essential gawk
+          bash experiments/packj-sandbox/build-sandbox.sh \
+            "$RUNNER_TEMP/packj-build" \
+            experiment-output/packj/logs/sandbox-build.log
+
+      - name: Print Packj version and commit
+        run: |
+          build="$RUNNER_TEMP/packj-build"
+          echo "Packj commit: $(git -C tools/packj rev-parse HEAD)"
+          (cd "$build/packj" && "$build/venv/bin/python" -c 'from packj import __version__; print("Packj", __version__)')
+          "$build/venv/bin/python" --version
+          sbox="$build/packj/packj/sandbox"
+          sha256sum "$sbox/sandbox.o" "$sbox/libsbox.so" "$sbox/libstrace.so" "$sbox/strace"
+          echo "Packj strace: $(LD_LIBRARY_PATH="$sbox" "$sbox/strace" --version | sed -n 1p)"
+          echo "strace source: $(git -C /tmp/packj-strace rev-parse HEAD)"
+
+      - name: Verify Packj sandbox CLI
+        run: |
+          build="$RUNNER_TEMP/packj-build"
+          py="$build/venv/bin/python"
+          sbox="$build/packj/packj/sandbox"
+          log=experiment-output/packj/logs/packj-sandbox-help.txt
+          (cd "$build/packj" && "$py" main.py sandbox --help) | tee "$log"
+          grep -q 'pm_tool' "$log" && grep -q '{install}' "$log" \
+            || { echo "::error::Unexpected packj sandbox CLI"; exit 1; }
+          test -f "$HOME/.packj.yaml" || { echo "::error::~/.packj.yaml missing"; exit 1; }
+
+          # Packj's own strace must trace on this runner (no LD_PRELOAD here:
+          # this checks ptrace, not the sandbox policy).
+          trace="$RUNNER_TEMP/packj-strace-check.trace"
+          LD_LIBRARY_PATH="$sbox" "$sbox/strace" -f -o "$trace" /bin/echo hello
+          grep -q 'execve("/bin/echo"' "$trace" \
+            || { echo "::error::Packj's strace produced no usable trace"; exit 1; }
+          rm -f "$trace"
+
+          # The rules profile Packj will build from the default policy.
+          (cd "$build/packj" && "$py" -c 'import os; from packj.sandbox.main import build_sandboxing_profile; print(build_sandboxing_profile("npm", os.path.expanduser("~/.packj.yaml")))') \
+            | tee experiment-output/packj/policy/expected-rules.profile
+          grep -qx $'\thide:/' experiment-output/packj/policy/expected-rules.profile \
+            || { echo "::error::Default fs policy did not produce hide:/"; exit 1; }
+
+      - name: Install Node.js for the sandboxed npm
+        id: node
+        run: |
+          # Packj's default fs policy hides everything outside its allow list,
+          # which includes /usr/local but not /opt (where setup-node puts Node).
+          # The same pinned Node.js release as latch-probe.yml is unpacked under
+          # /usr/local instead of weakening the policy. See the README.
+          version=22.23.3
+          sha256=df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de
+          tarball="$RUNNER_TEMP/node-v${version}-linux-x64.tar.xz"
+          curl -fsSL -o "$tarball" "https://nodejs.org/dist/v${version}/node-v${version}-linux-x64.tar.xz"
+          echo "$sha256  $tarball" | sha256sum -c -
+          sudo mkdir -p /usr/local/lib/nodejs
+          sudo tar -xJf "$tarball" -C /usr/local/lib/nodejs
+          rm -f "$tarball"
+          bin="/usr/local/lib/nodejs/node-v${version}-linux-x64/bin"
+          "$bin/node" --version
+          PATH="$bin:$PATH" npm --version
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+
+      - name: Locate environment probe package
+        id: probe_pkg
+        run: |
+          # Same tarball every other experiment installs.
+          tarball=packages/npm-probing-package-0.1.0.tgz
+          test -f "$tarball" || { echo "::error::$tarball not found"; exit 1; }
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Validate probe package
+        run: |
+          tarball="${{ steps.probe_pkg.outputs.tarball }}"
+          sha256sum "$tarball"
+          dep=$(jq -r '.dependencies["npm-probing-package"]' package.json)
+          if [ "$dep" != "file:$tarball" ]; then
+            echo "::error::Experiment A installs '$dep', not $tarball"
+            exit 1
+          fi
+          manifest=$(tar -xOzf "$tarball" package/package.json)
+          echo "$manifest" | jq '{name, version, scripts: {postinstall: .scripts.postinstall}, engines}'
+          echo "$manifest" | jq -e '.name == "npm-probing-package" and .version == "0.1.0"' >/dev/null \
+            || { echo "::error::$tarball is not npm-probing-package@0.1.0"; exit 1; }
+          echo "$manifest" | jq -e '.scripts.postinstall == "node scripts/postinstall.js"' >/dev/null \
+            || { echo "::error::$tarball has an unexpected postinstall script"; exit 1; }
+          # grep without -q reads all of tar's output (pipefail + early exit -> SIGPIPE).
+          tar -tzf "$tarball" | grep -x 'package/scripts/postinstall.js' >/dev/null \
+            || { echo "::error::$tarball does not contain scripts/postinstall.js"; exit 1; }
+
+      - name: Run npm install through Packj sandbox
+        id: sandbox
+        run: |
+          bash experiments/packj-sandbox/run-packj-sandbox.sh \
+            "$RUNNER_TEMP/packj-build" \
+            "${{ steps.node.outputs.bin }}" \
+            "${{ steps.probe_pkg.outputs.tarball }}" \
+            experiment-output
+
+      - name: Inspect Packj sandbox output
+        if: ${{ !cancelled() && steps.sandbox.conclusion != 'skipped' }}
+        run: bash experiments/packj-sandbox/verify-sandbox-run.sh sandbox experiment-output
+
+      - name: Verify npm ran inside the sandbox
+        if: ${{ !cancelled() && steps.sandbox.conclusion != 'skipped' }}
+        run: bash experiments/packj-sandbox/verify-sandbox-run.sh install experiment-output
+
+      - name: Verify probe lifecycle and output
+        if: ${{ !cancelled() && steps.sandbox.conclusion != 'skipped' }}
+        run: |
+          bash experiments/packj-sandbox/verify-sandbox-run.sh probe experiment-output \
+            "$(PATH="${{ steps.node.outputs.bin }}:$PATH" npm --version)"
+
+      - name: Classify experiment outcome
+        if: ${{ !cancelled() && steps.sandbox.conclusion != 'skipped' }}
+        run: bash experiments/packj-sandbox/verify-sandbox-run.sh classify experiment-output
+
+      - name: Collect run metadata
+        if: always()
+        env:
+          EXPERIMENT_ENV_ID: ENV-UNASSIGNED
+          EXPERIMENT_ENV_NAME: github-actions-ubuntu-packj-sandbox
+          EXPERIMENT_STUDY_ROLE: "Packj sandbox analysis condition; paired with the GitHub Actions Ubuntu VM baseline (probe.yml) and Packj audit --trace (github-actions-ubuntu-packj-trace.yml)"
+          EXPERIMENT_RUNNER: ubuntu-24.04
+        run: |
+          bash experiments/packj-sandbox/write-metadata.sh \
+            experiment-output \
+            "$RUNNER_TEMP/packj-build" \
+            "${{ steps.node.outputs.bin || '/usr/local/lib/nodejs/node-v22.23.3-linux-x64/bin' }}" \
+            packages/npm-probing-package-0.1.0.tgz
+
+          {
+            echo "### Packj sandbox experiment"
+            echo
+            echo "Outcome: \`$(jq -r '.outcome.outcome // "not classified"' experiment-output/metadata/experiment.json)\`"
+            echo
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            for f in experiment-output/metadata/checks/*.json; do
+              [ -f "$f" ] || continue
+              jq -r '.results[] | "| \(.check) | \(if .passed then "pass" else "**FAIL**" end) |"' "$f"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-actions-ubuntu-packj-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+          path: experiment-output/
+          if-no-files-found: warn
