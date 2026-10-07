@@ -100,7 +100,7 @@ jobs:
             echo "npm $(npm --version)"
             echo "npm at $(command -v npm)"
             echo "system python3 $(python3 --version 2>&1)"
-            command -v strace >/dev/null && strace --version | head -1 || echo "strace not installed yet"
+            command -v strace >/dev/null && strace --version | sed -n 1p || echo "strace not installed yet"
 
             echo
             echo "=== CPU ==="
@@ -120,7 +120,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y strace
-          strace --version | head -1
+          strace --version | sed -n 1p
           trace="$RUNNER_TEMP/strace-check.trace"
           if ! strace -f -o "$trace" /bin/echo "hello"; then
             echo "::error::strace could not trace /bin/echo on this runner; Packj --trace cannot work here"
@@ -202,7 +202,9 @@ jobs:
             || { echo "::error::$tarball is not npm-probing-package@0.1.0"; exit 1; }
           echo "$manifest" | jq -e '.scripts.postinstall == "node scripts/postinstall.js"' >/dev/null \
             || { echo "::error::$tarball has an unexpected postinstall script"; exit 1; }
-          tar -tzf "$tarball" | grep -qx 'package/scripts/postinstall.js' \
+          # grep without -q reads all of tar's output: with pipefail, grep -q exiting early
+          # makes tar die of SIGPIPE (141) and the check fail although the file exists.
+          tar -tzf "$tarball" | grep -x 'package/scripts/postinstall.js' >/dev/null \
             || { echo "::error::$tarball does not contain scripts/postinstall.js"; exit 1; }
 
       - name: Run Packj audit --trace
