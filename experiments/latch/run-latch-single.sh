@@ -30,8 +30,13 @@ COLLECT_DIR="$INSTANCES/$INSTANCE-collect"
 HOME_DIR="${RUNNER_TEMP:-/tmp}/latch-home-$INSTANCE"
 EMPTY_INSTANCE_PKGS="${RUNNER_TEMP:-/tmp}/latch-instancepkgs-$INSTANCE"
 
+# Resolve output paths now: the apptainer call below runs from $HOME_DIR.
 mkdir -p "$LATCH_OUT/straces" "$LATCH_OUT/logs"
 LATCH_OUT=$(realpath "$LATCH_OUT")
+if [ -n "$PROBE_OUT" ]; then
+  mkdir -p "$PROBE_OUT"
+  PROBE_OUT=$(realpath "$PROBE_OUT")
+fi
 for dir in "$WORK_DIR" "$COLLECT_DIR" "$HOME_DIR" "$EMPTY_INSTANCE_PKGS"; do
   if [ -e "$dir" ]; then
     echo "::error::$dir already exists; each instance must start clean"
@@ -70,7 +75,6 @@ done
 echo "$WORK_DIR/node_modules/$PKG_NAME" > "$LATCH_OUT/logs/lifecycle-cwd.txt"
 
 if [ -n "$PROBE_OUT" ]; then
-  mkdir -p "$PROBE_OUT"
   find "$COLLECT_DIR" -maxdepth 1 -type f -name 'install-*.json' -exec cp {} "$PROBE_OUT/" \;
 fi
 
