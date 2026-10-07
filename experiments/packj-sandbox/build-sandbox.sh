@@ -68,4 +68,8 @@ if [ -z "$relro" ] || [ $((16#$relro)) -lt $((0xad0 + 8192)) ]; then
   exit 1
 fi
 echo "libsbox.so .data.rel.ro: 0x$relro bytes (handler table 0xad0 + padding)"
+if readelf -l -W "$SBOX/libsbox.so" | grep -E 'GNU_STACK' | grep -qE ' RWE '; then
+  echo "::error::libsbox.so requests an executable stack; the padding must not change that"
+  exit 1
+fi
 ls -la "$SBOX"

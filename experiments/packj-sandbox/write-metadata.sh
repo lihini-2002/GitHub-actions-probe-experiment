@@ -147,7 +147,7 @@ jq -n \
       },
       sandbox_modifications: [
         "install.sh configures strace v5.19 with --enable-bundled=yes (build against strace 5.19 bundled kernel UAPI headers; it does not compile against Ubuntu 24.04 linux-libc-dev 6.8: BTRFS_EXTENT_REF_V0_KEY undeclared).",
-        "libsbox.so is linked with 8192 zero bytes after sandbox.o's 346-entry syscall handler table (Makefile + table-pad.s). sandbox.o indexes the table by syscall number without a bounds check; syscalls >= 346 (clone3, close_range, openat2, faccessat2, ...) otherwise jump through .got.plt and crash strace (SIGSEGV observed on the runner). With the padding they read NULL, the blob's own 'no handler' value, and pass through without Packj interposition, like the 252 unhooked syscalls below 346.",
+        "libsbox.so is linked with 8192 zero bytes after the 346-entry syscall handler table of sandbox.o (Makefile + table-pad.s). sandbox.o indexes the table by syscall number without a bounds check; syscalls >= 346 (clone3, close_range, openat2, faccessat2, ...) otherwise jump through .got.plt and crash strace (SIGSEGV observed on the runner). With the padding they read NULL, which the blob treats as no handler, and pass through without Packj interposition, like the 252 unhooked syscalls below 346.",
         "main.py, sandbox.o code and the policy are unchanged."
       ]
     },

@@ -23,10 +23,10 @@ index 82a4a3c..21bb0e3 100644
  
 diff --git a/packj/sandbox/table-pad.s b/packj/sandbox/table-pad.s
 new file mode 100644
-index 0000000..1e021b7
+index 0000000..7a3629c
 --- /dev/null
 +++ b/packj/sandbox/table-pad.s
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,14 @@
 +# Experiment patch: zero padding linked directly after sandbox.o.
 +#
 +# sandbox.o indexes a 346-entry syscall handler table (its .data.rel.ro) by
@@ -39,3 +39,5 @@ index 0000000..1e021b7
 +	.section .data.rel.ro,"aw"
 +	.balign 8
 +	.zero 8192	# 1024 entries: syscall numbers 346..1369
++	# Non-executable stack, as sandbox.o (no PT_GNU_STACK change to libsbox.so).
++	.section .note.GNU-stack,"",@progbits

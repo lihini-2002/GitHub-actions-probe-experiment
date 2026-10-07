@@ -116,7 +116,7 @@ Found from the first two GitHub runs (37591778929, 37593610922) and `diagnose-sa
 | | |
 | --- | --- |
 | **Problem** | With patch 1 only, Packj printed `Failed: installation error (-11)!`: its strace died of SIGSEGV as soon as npm ran. The kernel logged a general-protection fault in `libc.so.6` (`__getdelim`). gdb: `__getdelim (lineptr=tcp, …)` ← `syscall_entering_finish` (`sandbox.o` `main.c:90`) ← strace `trace_syscall`. Disassembly of `sandbox.o`: `packj_syscall_enter` and `packj_syscall_exit` do `handler = table[tcp->scno]; if (handler) handler(tcp)`, where the table (`sandbox.o`'s `.data.rel.ro`) has 346 entries (0xad0 bytes) and there is **no bounds check**. Every x86-64 syscall added since (`clone3` 435, `close_range` 436, `openat2` 437, `faccessat2` 439, `futex_waitv` 449, `fchmodat2` 452, …) reads past the table. In the linked `libsbox.so` the table is followed by `.dynamic`, `.got` and `.got.plt` (same layout with Ubuntu 22.04's ld 2.38, upstream's Dockerfile base, and 24.04's ld 2.42), so those syscalls jump through a libc pointer with strace's `tcp` as argument. This is a latent upstream bug that modern glibc/Node trigger. |
-| **Change** | A new 12-line `table-pad.s` emits 8192 zero bytes in `.data.rel.ro`, and the Makefile links it directly after `sandbox.o` (`OBJS := sandbox.o table-pad.o`). Table lookups for syscalls 346–1369 then read NULL, which the blob itself treats as "no handler". `build-sandbox.sh` checks that `libsbox.so`'s `.data.rel.ro` is 0xad0 + 8192 bytes. |
+| **Change** | A new 14-line `table-pad.s` emits 8192 zero bytes in `.data.rel.ro` (and a non-executable-stack note, like `sandbox.o`), and the Makefile links it directly after `sandbox.o` (`OBJS := sandbox.o table-pad.o`). Table lookups for syscalls 346–1369 then read NULL, which the blob itself treats as "no handler". `build-sandbox.sh` checks that `libsbox.so`'s `.data.rel.ro` is 0xad0 + 8192 bytes. |
 | **Not changed** | `sandbox.o`'s code and its 346 table entries (94 handlers), `main.py`, the policy, strace. |
 | **Effect on the probe** | Syscalls ≥ 346 are passed through **without Packj interposition**, as Packj already does for the 252 syscalls below 346 that it has no handler for. Packj does not rewrite or hide paths given to `openat2`, `faccessat2` or `fchmodat2`, and does not see `clone3`. Without the patch, the first such syscall crashes strace, and npm then runs entirely outside the sandbox (outcome `sandbox_failed_package_ran_outside`). Node's `fs.access`/`fs.stat`/`open` use `access`/`statx`/`openat` (21/332/257), which remain interposed. |
 
@@ -169,8 +169,10 @@ metadata/github-host.txt, experiment.json, outcome.json, packj-pip-freeze.txt, c
 1. **Copy-on-write layer.** `probe/install-<uuid>.json` was found in `sandbox-root.tar.gz` at
    `<workdir>/node_modules/npm-probing-package/results/`, i.e. libsbox redirected the probe's write.
    Ordinary npm writes to the host path.
-2. **The probe saw Packj's mechanism.** `LD_PRELOAD variable presence` = `true`,
-   `Own process tracer status` = `true`, and ancestors containing `strace` then `python3.10`.
+2. **The probe saw Packj's mechanism.** `Own process tracer status` = `true`, and ancestors
+   containing `strace` then `python3.10` (run 3: `dash, node, strace, python3.10, bash, …`).
+   `LD_PRELOAD variable presence` is **`false`**: Packj sets it for its strace, but the variable
+   does not reach the traced npm/probe (`sandbox.o` references `unsetenv` and `LD_PRELOAD`).
 3. **Packj's own records.** `root_*.csv` lists the install's files and connections, and
    `rules_*.profile` is the policy in force.
 4. **npm's own log** (inside the layer) shows `run npm-probing-package@0.1.0 postinstall …` and
@@ -178,8 +180,9 @@ metadata/github-host.txt, experiment.json, outcome.json, packj-pip-freeze.txt, c
 
 ## What the probe can observe that is due to Packj, not the experiment
 
-`LD_PRELOAD`, `LD_LIBRARY_PATH`, `SANDBOX_ROOT`, `SANDBOX_RULES` in its environment; being
-ptraced by Packj's strace 5.19; hidden paths (everything outside the allow list, including
+Being ptraced by Packj's strace 5.19 (`LD_PRELOAD` is set for that strace but was not visible to
+the probe; whether `LD_LIBRARY_PATH`, `SANDBOX_ROOT` or `SANDBOX_RULES` reach it is not something
+the probe records); hidden paths (everything outside the allow list, including
 `~/` apart from `~/.npm`/`~/.cache`/`~/.local`/`~/.ruby`, `/opt`, `/home/runner/work`, `/sys`,
 `/dev`, `/run`, `/mnt`); redirected writes; network kills; stdin closed by Packj.
 

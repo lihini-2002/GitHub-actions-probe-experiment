@@ -120,8 +120,10 @@ case "$CHECK" in
       jq -e --arg v "$EXPECTED_NPM" '.properties["Package-manager identity"].value == "npm" and .properties["Package-manager version"].value == $v' "$report"
     expect "probe: probe process was being traced (TracerPid != 0)" \
       jq -e '.properties["Own process tracer status"].value == true' "$report"
-    expect "probe: LD_PRELOAD was present (Packj preloads libsbox.so)" \
-      jq -e '.properties["LD_PRELOAD variable presence"].value == true' "$report"
+    # Recorded, not required: Packj sets LD_PRELOAD=libsbox.so for its strace,
+    # but the first GitHub run showed the probe does not see it (sandbox.o
+    # references unsetenv and "LD_PRELOAD", so it removes it from the tracee).
+    echo "INFO: LD_PRELOAD visible to the probe: $(jq -r '.properties["LD_PRELOAD variable presence"].value' "$report")"
     expect "probe: probe's ancestors include strace started by Packj's Python" \
       jq -e '.properties["Bounded ancestor-process executable basename sequence"].value as $a
              | ($a | index("strace")) as $i
