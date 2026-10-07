@@ -34,13 +34,16 @@ jobs:
     timeout-minutes: 150
 
     steps:
-      - name: Checkout repository and pinned LATCH sources
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          # Non-recursive on purpose: tools/latch contains a `cli` gitlink with
-          # no .gitmodules entry, which a recursive update cannot resolve.
-          # tools/npm-cli pins the commit that gitlink points to.
-          submodules: true
+
+      - name: Fetch pinned LATCH sources
+        run: |
+          # Not via actions/checkout `submodules:`: even when non-recursive it runs
+          # `git submodule foreach --recursive`, which fails on tools/latch's `cli`
+          # gitlink (no .gitmodules entry upstream). tools/npm-cli pins the commit
+          # that gitlink points to, so only the two top-level submodules are needed.
+          git submodule update --init --depth 1 tools/latch tools/npm-cli
 
       - name: Verify pinned LATCH sources
         run: |
