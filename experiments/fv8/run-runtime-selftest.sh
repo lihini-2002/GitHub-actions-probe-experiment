@@ -17,6 +17,13 @@ RUNTIME=$1
 OUT=$2
 SCRATCH=$3
 
+# The runtime is run from scratch directories (it may write VisibleV8 logs to
+# its cwd), so every path handed to it must be absolute.
+mkdir -p "$OUT" "$SCRATCH"
+RUNTIME=$(cd "$RUNTIME" && pwd)
+OUT=$(cd "$OUT" && pwd)
+SCRATCH=$(cd "$SCRATCH" && pwd)
+
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 NODE="$RUNTIME/bin/node"
 DEST="$OUT/runtime"

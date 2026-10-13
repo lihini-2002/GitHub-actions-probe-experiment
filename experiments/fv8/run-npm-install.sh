@@ -44,6 +44,10 @@ REPORT_DEST=$7
 if [ -e "$WORK" ]; then echo "$WORK already exists" >&2; exit 2; fi
 mkdir -p "$WORK" "$OUT/npm-logs" "$OUT/vv8-logs/lifecycle" "$OUT/vv8-logs/npm" "$REPORT_DEST"
 TARBALL=$(readlink -f "$TARBALL")
+# npm runs from $WORK; keep every path absolute.
+RUNTIME=$(readlink -f "$RUNTIME")
+OUT=$(readlink -f "$OUT")
+REPORT_DEST=$(readlink -f "$REPORT_DEST")
 
 case "$NPM_HOST" in
   fv8-node)
