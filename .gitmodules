@@ -8,3 +8,7 @@
 [submodule "tools/packj"]
 	path = tools/packj
 	url = https://github.com/ossillate-inc/packj.git
+[submodule "tools/fv8"]
+	path = tools/fv8
+	url = https://github.com/wspr-ncsu/FV8.git
+	shallow = true

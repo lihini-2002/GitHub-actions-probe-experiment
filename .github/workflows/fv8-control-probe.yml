@@ -1,0 +1,52 @@
+name: Environment Probe - GitHub Ubuntu + FV8 matched control
+
+# Matched control for fv8-probe.yml: the same runner, the same Node.js commit
+# (main@07f481cf, V8 12.2.281.27), the same configure options, toolchain,
+# npm harness and probe tarball, but no FV8 patch. Differences between the
+# two runs' probe reports are attributable to FV8's instrumentation; what
+# they share comes from the VM/runtime. Results and artifacts are kept
+# separate from the FV8 run (results/fv8-control/<run-id>/).
+#
+# Choose the same inputs as the FV8 run you compare against.
+
+on:
+  workflow_dispatch:
+    inputs:
+      npm_host:
+        description: Must match the FV8 run (fv8-node = npm on the control runtime)
+        type: choice
+        options:
+          - fv8-node
+          - system-node
+        default: fv8-node
+      v8_options:
+        description: Must match the FV8 run
+        type: choice
+        options:
+          - --no-lazy
+          - none
+        default: --no-lazy
+      node_snapshot:
+        description: Must match the FV8 run
+        type: choice
+        options:
+          - snapshot
+          - no-snapshot
+        default: snapshot
+      rebuild_runtime:
+        description: Ignore the cached runtime and rebuild Node.js from source (~2 h)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  control:
+    uses: ./.github/workflows/fv8-node-experiment.yml
+    with:
+      variant: control
+      npm_host: ${{ inputs.npm_host }}
+      v8_options: ${{ inputs.v8_options }}
+      node_snapshot: ${{ inputs.node_snapshot }}
+      rebuild_runtime: ${{ inputs.rebuild_runtime }}

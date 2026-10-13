@@ -1,0 +1,61 @@
+name: Environment Probe - GitHub Ubuntu + FV8
+
+# GitHub Ubuntu VM -> Node.js main@07f481cf built with FV8's released V8
+# patch (forced execution + VisibleV8 logging) -> npm install <probe tarball>
+# --foreground-scripts -> postinstall on the FV8 runtime -> probe.
+#
+# FV8 itself is released as a Chromium build; it has no Node.js/npm mode.
+# This is a researcher reconstruction (npm_harness_type
+# "researcher_reconstructed_fv8_npm_harness"): see docs/fv8-setup-notes.md.
+# Matched control: fv8-control-probe.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      npm_host:
+        description: >-
+          fv8-node: npm itself also runs on the FV8 runtime (everything under
+          FV8, as all page JavaScript runs under FV8 in the authors' browser).
+          system-node: npm runs on setup-node 22; only the lifecycle script
+          runs on the FV8 runtime.
+        type: choice
+        options:
+          - fv8-node
+          - system-node
+        default: fv8-node
+      v8_options:
+        description: >-
+          V8 flags baked into the runtime. --no-lazy is the flag in the
+          authors' README example (--js-flags='--no-lazy').
+        type: choice
+        options:
+          - --no-lazy
+          - none
+        default: --no-lazy
+      node_snapshot:
+        description: >-
+          no-snapshot builds Node.js with --without-node-snapshot (only if the
+          snapshot step of the build fails under FV8). Use the same value for
+          the control.
+        type: choice
+        options:
+          - snapshot
+          - no-snapshot
+        default: snapshot
+      rebuild_runtime:
+        description: Ignore the cached runtime and rebuild Node.js from source (~2 h)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  fv8:
+    uses: ./.github/workflows/fv8-node-experiment.yml
+    with:
+      variant: fv8
+      npm_host: ${{ inputs.npm_host }}
+      v8_options: ${{ inputs.v8_options }}
+      node_snapshot: ${{ inputs.node_snapshot }}
+      rebuild_runtime: ${{ inputs.rebuild_runtime }}

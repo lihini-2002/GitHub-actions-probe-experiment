@@ -1,0 +1,301 @@
+name: FV8 Node.js experiment (shared job)
+
+# Shared job for fv8-probe.yml (variant: fv8) and fv8-control-probe.yml
+# (variant: control). Both run exactly these steps; only the variant differs,
+# so the control matches the FV8 run except for the FV8 patch.
+#
+# GitHub Ubuntu VM -> Node.js main@07f481cf (+ FV8 V8 patch | unmodified)
+#   -> npm install <probe tarball> --foreground-scripts -> postinstall -> probe
+# See docs/fv8-setup-notes.md and experiments/fv8/README.md.
+#
+# As in latch-probe.yml and the Packj workflows, no job-level `env:` is set
+# and nothing is written to $GITHUB_ENV: npm and the probe inherit the step
+# environment. Values flow between steps through step outputs only.
+
+on:
+  workflow_call:
+    inputs:
+      variant:
+        description: fv8 or control
+        type: string
+        required: true
+      npm_host:
+        description: fv8-node (npm runs on the experiment runtime) or system-node (npm runs on setup-node 22)
+        type: string
+        default: fv8-node
+      v8_options:
+        description: V8 flags baked into the runtime, or none
+        type: string
+        default: --no-lazy
+      node_snapshot:
+        description: snapshot or no-snapshot
+        type: string
+        default: snapshot
+      rebuild_runtime:
+        description: Ignore the actions/cache entry and build the runtime from source
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch pinned FV8 sources
+        run: |
+          # Only this submodule: see latch-probe.yml for why actions/checkout
+          # `submodules:` is not used in this repository.
+          git submodule update --init --depth 1 tools/fv8
+
+      - name: Verify pinned FV8 sources
+        run: |
+          expected=57fc2b2699563316958603934aba572907171162
+          actual=$(git -C tools/fv8 rev-parse HEAD)
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::tools/fv8 is at $actual, expected $expected"
+            exit 1
+          fi
+          echo "tools/fv8 @ $actual"
+          echo "6dc767202b59eb770feeea27135ffd9455b4b6b2f1f0b9e97752de34880a3c39  tools/fv8/patches/V8_patch_122.diff" | sha256sum -c -
+
+      - name: Validate inputs
+        id: cfg
+        run: |
+          case "${{ inputs.variant }}" in
+            fv8)     experiment=fv8 ;;
+            control) experiment=fv8-control ;;
+            *) echo "::error::variant must be fv8 or control"; exit 1 ;;
+          esac
+          case "${{ inputs.npm_host }}" in fv8-node|system-node) ;; *) echo "::error::bad npm_host"; exit 1 ;; esac
+          case "${{ inputs.v8_options }}" in --no-lazy|none) ;; *) echo "::error::bad v8_options"; exit 1 ;; esac
+          case "${{ inputs.node_snapshot }}" in snapshot|no-snapshot) ;; *) echo "::error::bad node_snapshot"; exit 1 ;; esac
+          out="results/$experiment/$GITHUB_RUN_ID"
+          mkdir -p "$out/logs" "$out/probe" "$out/checks" "$out/fv8" "$out/install"
+          echo "experiment=$experiment" >> "$GITHUB_OUTPUT"
+          echo "out=$out" >> "$GITHUB_OUTPUT"
+          echo "runtime=$RUNNER_TEMP/node-runtime" >> "$GITHUB_OUTPUT"
+          echo "Results: $out"
+
+      # Same Node.js setup as the baseline (probe.yml). Used for the
+      # `system-node` npm host and recorded as the outer environment; with
+      # the default `fv8-node` host npm runs on the experiment runtime.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Record outer environment (before any FV8/control runtime)
+        run: |
+          bash experiments/fv8/record-environment.sh \
+            "${{ steps.cfg.outputs.out }}" \
+            "${{ inputs.variant }}" \
+            "Node.js main@07f481cf built from source on this runner image (variant ${{ inputs.variant }}); reused from actions/cache when an entry with identical pinned inputs exists"
+
+      - name: Inspect the authors' released FV8 build (not executed)
+        run: |
+          bash experiments/fv8/inspect-fv8-release.sh \
+            "${{ steps.cfg.outputs.out }}" \
+            "$RUNNER_TEMP/fv8-release"
+
+      - name: Compute runtime cache key
+        id: key
+        run: |
+          echo "key=node-runtime-v1-${{ inputs.variant }}-v8opts_${{ inputs.v8_options == '--no-lazy' && 'nolazy' || 'none' }}-${{ inputs.node_snapshot }}-${{ hashFiles('experiments/fv8/build-node-runtime.sh', 'experiments/fv8/compat/**', 'tools/fv8/patches/V8_patch_122.diff') }}-ubuntu-24.04" >> "$GITHUB_OUTPUT"
+
+      - name: Restore runtime from cache
+        id: cache
+        if: ${{ !inputs.rebuild_runtime }}
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.cfg.outputs.runtime }}
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Build Node.js runtime (${{ inputs.variant }})
+        id: build
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        run: |
+          # Build tree on the larger /mnt disk when available.
+          if sudo mkdir -p /mnt/node-build 2>/dev/null; then
+            sudo chown "$(id -u):$(id -g)" /mnt/node-build
+            work=/mnt/node-build
+          else
+            work="$RUNNER_TEMP/node-build"
+          fi
+          df -h / "$work"
+          log="$RUNNER_TEMP/setup-build.log"
+          bash experiments/fv8/build-node-runtime.sh \
+            "${{ inputs.variant }}" \
+            "$work" \
+            "${{ steps.cfg.outputs.runtime }}" \
+            "${{ inputs.v8_options }}" \
+            "${{ inputs.node_snapshot }}" \
+            2>&1 | tee "$log"
+          cp "$log" "${{ steps.cfg.outputs.runtime }}/fv8-experiment/build.log"
+
+      - name: Save runtime to cache
+        if: ${{ steps.build.outcome == 'success' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.cfg.outputs.runtime }}
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Collect setup/build log
+        if: always()
+        run: |
+          out="${{ steps.cfg.outputs.out }}"
+          rt="${{ steps.cfg.outputs.runtime }}"
+          if [ -f "$rt/fv8-experiment/build.log" ]; then
+            cp "$rt/fv8-experiment/build.log" "$out/logs/setup-build.log"
+          elif [ -f "$RUNNER_TEMP/setup-build.log" ]; then
+            cp "$RUNNER_TEMP/setup-build.log" "$out/logs/setup-build.log"
+          fi
+          echo "cache-hit: ${{ steps.cache.outputs.cache-hit == 'true' }}" > "$out/logs/runtime-source.txt"
+          echo "cache-key: ${{ steps.key.outputs.key }}" >> "$out/logs/runtime-source.txt"
+
+      - name: Runtime self-test (versions, FV8 code, forced-execution canary)
+        id: selftest
+        run: |
+          bash experiments/fv8/run-runtime-selftest.sh \
+            "${{ steps.cfg.outputs.runtime }}" \
+            "${{ steps.cfg.outputs.out }}" \
+            "$RUNNER_TEMP/selftest"
+
+      - name: Verify runtime
+        run: |
+          bash experiments/fv8/verify-fv8-run.sh runtime \
+            "${{ steps.cfg.outputs.out }}" "${{ inputs.variant }}" "${{ inputs.v8_options }}"
+
+      - name: Locate environment probe package
+        id: probe_pkg
+        run: |
+          # Same tarball the baseline (probe.yml), OpenSSF, LATCH and Packj
+          # experiments install.
+          tarball=packages/npm-probing-package-0.1.0.tgz
+          test -f "$tarball" || { echo "::error::$tarball not found"; exit 1; }
+          sha256sum "$tarball"
+          dep=$(jq -r '.dependencies["npm-probing-package"]' package.json)
+          if [ "$dep" != "file:$tarball" ]; then
+            echo "::error::The baseline installs '$dep', not $tarball"
+            exit 1
+          fi
+          manifest=$(tar -xOzf "$tarball" package/package.json)
+          echo "$manifest" | jq -e '.name == "npm-probing-package" and .version == "0.1.0"' >/dev/null \
+            || { echo "::error::$tarball is not npm-probing-package@0.1.0"; exit 1; }
+          echo "$manifest" | jq -e '.scripts.postinstall == "node scripts/postinstall.js"' >/dev/null \
+            || { echo "::error::$tarball has an unexpected postinstall script"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/probe-input"
+          cp "$tarball" "$RUNNER_TEMP/probe-input/"
+          echo "tarball=$RUNNER_TEMP/probe-input/$(basename "$tarball")" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test - canary package through npm lifecycle
+        id: smoke
+        run: |
+          npm pack ./experiments/fv8/smoke-package --pack-destination "$RUNNER_TEMP"
+          had_npm_dir=false; [ -e "$HOME/.npm" ] && had_npm_dir=true
+          out="${{ steps.cfg.outputs.out }}/install/smoke"
+          status=0
+          bash experiments/fv8/run-npm-install.sh \
+            "${{ steps.cfg.outputs.runtime }}" \
+            "${{ inputs.npm_host }}" \
+            "$RUNNER_TEMP/lifecycle-smoke-package-1.0.0.tgz" \
+            "$RUNNER_TEMP/install-smoke" \
+            "$out" \
+            lifecycle-smoke-package \
+            "$out/report" || status=$?
+          # Leave no smoke-test state where the probe could observe it.
+          rm -rf "$RUNNER_TEMP/install-smoke" "$RUNNER_TEMP/lifecycle-smoke-package-1.0.0.tgz"
+          if [ "$had_npm_dir" = false ]; then rm -rf "$HOME/.npm"; fi
+          exit "$status"
+
+      - name: Verify smoke test
+        if: ${{ !cancelled() && steps.smoke.conclusion != 'skipped' }}
+        run: bash experiments/fv8/verify-fv8-run.sh smoke "${{ steps.cfg.outputs.out }}" "${{ inputs.variant }}"
+
+      - name: Install environment probe through npm (lifecycle under ${{ inputs.variant }} runtime)
+        id: probe_install
+        run: |
+          bash experiments/fv8/run-npm-install.sh \
+            "${{ steps.cfg.outputs.runtime }}" \
+            "${{ inputs.npm_host }}" \
+            "${{ steps.probe_pkg.outputs.tarball }}" \
+            "$RUNNER_TEMP/install-probe" \
+            "${{ steps.cfg.outputs.out }}/install/probe" \
+            npm-probing-package \
+            "${{ steps.cfg.outputs.out }}/probe"
+
+      - name: Verify probe execution
+        if: ${{ !cancelled() && steps.probe_install.conclusion != 'skipped' }}
+        run: bash experiments/fv8/verify-fv8-run.sh probe "${{ steps.cfg.outputs.out }}" "${{ inputs.variant }}"
+
+      - name: Write metadata, classification and manifest
+        if: always()
+        run: |
+          bash experiments/fv8/write-metadata.sh \
+            "${{ steps.cfg.outputs.out }}" \
+            "${{ inputs.variant }}" \
+            "${{ inputs.npm_host }}" \
+            "${{ inputs.v8_options }}" \
+            "${{ steps.cache.outputs.cache-hit == 'true' }}" \
+            packages/npm-probing-package-0.1.0.tgz
+
+      - name: Check results for credential-like strings
+        if: always()
+        run: |
+          # Nothing secret is passed to this job, but VisibleV8 logs record API
+          # call arguments, so check before uploading. Matches are never
+          # printed; a matching file is removed from the upload and listed.
+          out="${{ steps.cfg.outputs.out }}"
+          pattern='gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|npm_[A-Za-z0-9]{36}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[abprs]-[A-Za-z0-9-]{10,}'
+          : > "$out/logs/credential-scan.txt"
+          while IFS= read -r -d '' f; do
+            if [[ "$f" == *.gz ]]; then
+              zcat "$f" | grep -qaE "$pattern" || continue
+            else
+              grep -qaE "$pattern" "$f" || continue
+            fi
+            echo "removed: ${f#"$out"/}" | tee -a "$out/logs/credential-scan.txt"
+            rm -f "$f"
+          done < <(find "$out" -type f -not -name credential-scan.txt -print0)
+          if [ -s "$out/logs/credential-scan.txt" ]; then
+            echo "::warning::Files with credential-like strings were removed from the upload; see logs/credential-scan.txt"
+          else
+            echo "no credential-like strings found" | tee "$out/logs/credential-scan.txt"
+          fi
+
+      - name: Summarize run
+        if: always()
+        run: |
+          out="${{ steps.cfg.outputs.out }}"
+          {
+            echo "### ${{ steps.cfg.outputs.experiment }} experiment checks"
+            echo
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            for f in "$out"/checks/*.json; do
+              [ -f "$f" ] || continue
+              jq -r '.results[] | "| \(.check) | \(if .passed then "pass" else "**FAIL**" end) |"' "$f"
+            done
+            echo
+            echo "Harness label: \`$(jq -r .label "$out/harness-classification.json" 2>/dev/null)\`"
+            echo
+            echo "Experiment valid: $(jq -r .experiment_valid "$out/harness-classification.json" 2>/dev/null)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.cfg.outputs.experiment }}-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: results/
+          if-no-files-found: warn

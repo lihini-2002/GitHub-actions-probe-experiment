@@ -1,0 +1,11 @@
+{
+  "name": "lifecycle-smoke-package",
+  "version": "1.0.0",
+  "description": "Harness check for the FV8 experiment: shows whether an npm postinstall runs on the experiment's Node.js build and whether FV8 forced execution is active. Not the probe.",
+  "private": true,
+  "license": "MIT",
+  "files": ["canary.cjs"],
+  "scripts": {
+    "postinstall": "node canary.cjs markers.json"
+  }
+}
