@@ -46,6 +46,17 @@ on:
           - snapshot
           - no-snapshot
         default: snapshot
+      fv8_fixes:
+        description: >-
+          none: FV8's patch exactly as released (the Node.js build crashed in
+          node_mksnapshot with it, run 38494602753). property-case: also apply
+          the one-line researcher fix experiments/fv8/patches/fv8-astnode-property-case.patch
+          (fv8 variant only; recorded as a deviation).
+        type: choice
+        options:
+          - none
+          - property-case
+        default: none
       rebuild_runtime:
         description: Ignore the cached container-built runtime and rebuild Node.js from source (~70-80 min)
         type: boolean
@@ -137,6 +148,10 @@ jobs:
           case "${{ inputs.npm_host }}" in fv8-node|system-node) ;; *) echo "::error::bad npm_host"; exit 1 ;; esac
           case "${{ inputs.v8_options }}" in --no-lazy|none) ;; *) echo "::error::bad v8_options"; exit 1 ;; esac
           case "${{ inputs.node_snapshot }}" in snapshot|no-snapshot) ;; *) echo "::error::bad node_snapshot"; exit 1 ;; esac
+          case "${{ inputs.fv8_fixes }}" in none|property-case) ;; *) echo "::error::bad fv8_fixes"; exit 1 ;; esac
+          if [ "${{ inputs.variant }}" = control ] && [ "${{ inputs.fv8_fixes }}" != none ]; then
+            echo "::error::fv8_fixes applies to the fv8 variant only; use none for the control"; exit 1
+          fi
           out="results/$experiment/$GITHUB_RUN_ID"
           mkdir -p "$out/logs" "$out/probe" "$out/checks" "$out/fv8" "$out/install" "$out/container"
           cp "$RUNNER_TEMP/container-setup.log" "$out/logs/container-setup.log"
@@ -176,7 +191,7 @@ jobs:
       - name: Compute runtime cache key
         id: key
         run: |
-          echo "key=node-runtime-v1-container-ubuntu24.04-f610ab946481-${{ inputs.variant }}-v8opts_${{ inputs.v8_options == '--no-lazy' && 'nolazy' || 'none' }}-${{ inputs.node_snapshot }}-${{ hashFiles('experiments/fv8/build-node-runtime.sh', 'experiments/fv8/compat/**', 'tools/fv8/patches/V8_patch_122.diff') }}" >> "$GITHUB_OUTPUT"
+          echo "key=node-runtime-v1-container-ubuntu24.04-f610ab946481-${{ inputs.variant }}-v8opts_${{ inputs.v8_options == '--no-lazy' && 'nolazy' || 'none' }}-${{ inputs.node_snapshot }}-fixes_${{ inputs.fv8_fixes }}-${{ hashFiles('experiments/fv8/build-node-runtime.sh', 'experiments/fv8/compat/**', 'experiments/fv8/patches/**', 'tools/fv8/patches/V8_patch_122.diff') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore runtime from cache
         id: cache
@@ -205,6 +220,7 @@ jobs:
             "${{ steps.cfg.outputs.runtime }}" \
             "${{ inputs.v8_options }}" \
             "${{ inputs.node_snapshot }}" \
+            "${{ inputs.fv8_fixes }}" \
             2>&1 | tee "$log"
           cp "$log" "${{ steps.cfg.outputs.runtime }}/fv8-experiment/build.log"
           # Evidence that this build ran in the job container; stored with the

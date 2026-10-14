@@ -164,6 +164,10 @@ jq -n \
       fv8_patch: ($build_info.fv8_patch // null),
       fv8_patch_sha256: ($build_info.fv8_patch_sha256 // null),
       fv8_patch_applied: (if $build_info == null then null else $build_info.fv8_patch_applied end),
+      fv8_patch_as_released: (if $build_info == null then null
+        elif ($build_info | has("fv8_patch_as_released")) then $build_info.fv8_patch_as_released
+        else $build_info.fv8_patch_applied end),
+      researcher_fv8_fixes: (if $build_info == null then null else ($build_info.researcher_fv8_fixes // []) end),
       fv8_patch_apply_options: ($build_info.fv8_patch_apply_options // null),
       compat_header: ($build_info.compat_header // null),
       compat_header_sha256: ($build_info.compat_header_sha256 // null),
@@ -193,7 +197,7 @@ jq -n \
         "experiments/fv8/compat/build/build_config.h (Chromium BUILDFLAG macros; no FV8 logic)",
         "V8 flags baked in with configure --v8-options (authors pass --js-flags in Chromium)",
         "npm harness: PATH-based lifecycle node selection, canary smoke package, verification"
-      ]
+      ] + [($build_info.researcher_fv8_fixes // [])[] | "researcher fix to FV8 code: \(.patch) (\(.change))"]
     }
   }' > "$OUT/fv8-metadata.json"
 
@@ -228,6 +232,8 @@ jq -n \
     architecture: $arch,
     runner_architecture: $runner_arch,
     fv8_patch_applied: $meta.runtime.fv8_patch_applied,
+    fv8_patch_as_released: $meta.runtime.fv8_patch_as_released,
+    fv8_researcher_fixes: ($meta.runtime.researcher_fv8_fixes // [] | map(.name)),
     v8_options: $meta.runtime.v8_options_baked_in,
     runtime_restored_from_cache: $meta.runtime.restored_from_actions_cache,
     forced_execution_enabled: $cls.forced_execution_enabled,

@@ -18,7 +18,11 @@ reconstruction works.
 > (e.g. run 38428556729) are all **`fv8-control-probe.yml`**, the matched control: Node.js built
 > *without* the FV8 patch (`fv8_patch_applied: false`, `forced_execution_enabled: false`, label
 > `probe_executed_under_control_runtime_verified`). `fv8-probe.yml`, the FV8-patched build, has not
-> been run yet. The FV8 variant of either experiment is therefore still unverified on GitHub.
+> been run yet. The first FV8 build (this experiment, run 38494602753, 2026-10-14) compiled but
+> **crashed in Node's `node_mksnapshot`** with the FV8 patch as released; see
+> [fv8-setup-notes.md §9a](fv8-setup-notes.md#9a-fv8s-released-patch-crashes-nodejss-build-optional-one-line-fix).
+> Both experiments now take an opt-in input `fv8_fixes: property-case` that applies a one-line,
+> documented researcher fix. Use the same value in A and B when comparing them.
 
 ## 1. What a GitHub Actions container job is
 
@@ -77,7 +81,8 @@ runtime is built against.
 
 ## 9. Changes compared with the VM experiment
 
-**FV8 itself: none.** Same FV8 commit, same patch file (hash-checked), same patch options, same
+**FV8 itself: none.** The `fv8_fixes` input (section 9a of the setup notes) exists in both
+experiments, with the same patch and default. Same FV8 commit, same patch file (hash-checked), same patch options, same
 compatibility header, same Node.js commit, same configure options (`--v8-options=--no-lazy`,
 snapshot on), same canary, same npm command and same probe tarball, with the same input defaults.
 The scripts in `experiments/fv8/` are used byte-for-byte.
@@ -170,11 +175,12 @@ job, and permissions are `contents: read`.
 ## 13. Running it
 
 GitHub → **Actions** → **Environment Probe - GitHub Ubuntu container job + FV8** → **Run workflow**
-→ branch `main`, `variant: fv8`, other inputs at their defaults (the same defaults as Experiment A)
+→ branch `main`, `variant: fv8`, `fv8_fixes: property-case` (with `none` the build crashes, see above),
+other inputs at their defaults (the same defaults as Experiment A)
 → **Run workflow**. For the matched control in the container, run it again with `variant: control`.
 
 ```bash
-gh workflow run fv8-container-probe.yml --ref main -f variant=fv8
+gh workflow run fv8-container-probe.yml --ref main -f variant=fv8 -f fv8_fixes=property-case
 gh workflow run fv8-container-probe.yml --ref main -f variant=control
 gh run download <run-id> -n fv8-container-<run-id>-1
 ```
@@ -190,6 +196,7 @@ VM); later runs restore it from the container cache and re-verify it.
 | Container layer | No | Yes: `ubuntu:24.04@sha256:f610ab94…` (amd64) |
 | FV8 commit | `57fc2b26…` | `57fc2b26…` |
 | FV8 patch | `V8_patch_122.diff` verbatim | same file, same hash, same options |
+| Researcher fix (`fv8_fixes`) | `none` or `property-case` | same input, same patch file; must match A when comparing |
 | FV8 forced execution | always on in the patched build; `--no-lazy`; verified by canary (only the control has run so far) | same build options; verified by the same canary |
 | V8 / Chromium base | runtime V8 12.2.281.27; authors' build Chromium 122.0.6261.111 / V8 12.2.281.21 | same |
 | Node.js | `v22.0.0-pre` (`07f481cf`) | `v22.0.0-pre` (`07f481cf`), compiled in the container |

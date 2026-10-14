@@ -99,6 +99,8 @@ jq -n \
       scanner: (if $variant == "fv8" then "FV8" else "none (matched control: same Node.js build without the FV8 patch)" end),
       fv8_commit: ($manifest.fv8_commit),
       fv8_patch_applied: ($manifest.fv8_patch_applied),
+      fv8_patch_as_released: ($manifest.fv8_patch_as_released),
+      fv8_researcher_fixes: ($manifest.fv8_researcher_fixes),
       base_v8_version: ($manifest.base_v8_version),
       base_chromium_version: ($manifest.base_chromium_version),
       runtime_v8_version: ($manifest.runtime_v8_version),

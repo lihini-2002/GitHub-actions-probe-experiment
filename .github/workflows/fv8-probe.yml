@@ -42,6 +42,17 @@ on:
           - snapshot
           - no-snapshot
         default: snapshot
+      fv8_fixes:
+        description: >-
+          none: FV8's patch exactly as released (Node.js's build crashed in
+          node_mksnapshot with it, run 38494602753). property-case: also apply
+          the one-line researcher fix experiments/fv8/patches/fv8-astnode-property-case.patch
+          (recorded as a deviation).
+        type: choice
+        options:
+          - none
+          - property-case
+        default: none
       rebuild_runtime:
         description: Ignore the cached runtime and rebuild Node.js from source (~2 h)
         type: boolean
@@ -58,4 +69,5 @@ jobs:
       npm_host: ${{ inputs.npm_host }}
       v8_options: ${{ inputs.v8_options }}
       node_snapshot: ${{ inputs.node_snapshot }}
+      fv8_fixes: ${{ inputs.fv8_fixes }}
       rebuild_runtime: ${{ inputs.rebuild_runtime }}

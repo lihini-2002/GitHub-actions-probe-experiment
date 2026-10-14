@@ -13,7 +13,12 @@
 # runtime from the actions/cache entry.
 #
 # Usage: build-node-runtime.sh <fv8|control> <work-dir> <runtime-dir> <v8-options|none> \
-#          <snapshot|no-snapshot>
+#          <snapshot|no-snapshot> [none|property-case]
+#
+# The optional 6th argument selects researcher fixes to FV8's released patch
+# (default none = FV8 exactly as released). property-case applies
+# patches/fv8-astnode-property-case.patch after the FV8 patch (see that file);
+# it only applies to the fv8 variant.
 #
 # no-snapshot adds --without-node-snapshot. Node's build runs the freshly
 # built engine (node_mksnapshot) over Node's bootstrap code; this option exists
@@ -26,6 +31,7 @@ WORK=$2
 RUNTIME=$3
 V8_OPTIONS=$4
 SNAPSHOT=$5
+FV8_FIXES=${6:-none}
 
 # Pins. Changing any of these changes the actions/cache key (the key hashes
 # this file).
@@ -37,6 +43,7 @@ NODE_COMMIT=07f481cfcf1153336534dc5d3cd4c5c9770a72be
 NODE_V8_VERSION=12.2.281.27
 FV8_COMMIT=57fc2b2699563316958603934aba572907171162
 FV8_PATCH_SHA256=6dc767202b59eb770feeea27135ffd9455b4b6b2f1f0b9e97752de34880a3c39
+FIX_PROPERTY_CASE_SHA256=7a40be232b78e9a9fb6a8c3a9a4a2564f383bc0537c24cb135af42da24d09169
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
@@ -48,6 +55,10 @@ INFO="$RUNTIME/fv8-experiment"
 
 case "$VARIANT" in fv8|control) ;; *) echo "variant must be fv8 or control" >&2; exit 2 ;; esac
 case "$SNAPSHOT" in snapshot|no-snapshot) ;; *) echo "snapshot must be snapshot or no-snapshot" >&2; exit 2 ;; esac
+case "$FV8_FIXES" in none|property-case) ;; *) echo "fv8 fixes must be none or property-case" >&2; exit 2 ;; esac
+if [ "$VARIANT" = control ] && [ "$FV8_FIXES" != none ]; then
+  echo "fv8 fixes apply to the fv8 variant only" >&2; exit 2
+fi
 if [ -e "$SRC" ] || [ -e "$RUNTIME" ]; then
   echo "$SRC or $RUNTIME already exists; refusing to build over it" >&2
   exit 2
@@ -102,6 +113,27 @@ if [ "$VARIANT" = fv8 ]; then
   grep -q 'Found match for API: ' "$SRC/deps/v8/src/interpreter/bytecode-generator.cc"
   grep -q 'vv8-%ld-%d-%d-%s.%%d.log' "$SRC/deps/v8/src/runtime/runtime-test.cc"
   patch_applied=true
+
+  fixes_json='[]'
+  if [ "$FV8_FIXES" = property-case ]; then
+    echo "=== Apply researcher fix (not FV8): fv8-astnode-property-case.patch"
+    fix="$HERE/patches/fv8-astnode-property-case.patch"
+    echo "$FIX_PROPERTY_CASE_SHA256  $fix" | sha256sum -c -
+    (cd "$SRC/deps/v8" && patch -p1 -F0 --forward --batch --no-backup-if-mismatch < "$fix") \
+      | tee "$INFO/researcher-fix-apply.log"
+    if grep -i 'fuzz\|offset\|FAILED' "$INFO/researcher-fix-apply.log"; then
+      echo "researcher fix did not apply exactly" >&2
+      exit 1
+    fi
+    grep -q 'case 45: { // case 45: {' "$SRC/deps/v8/src/interpreter/bytecode-generator.cc"
+    if grep -q 'case 44: { // case 45: {' "$SRC/deps/v8/src/interpreter/bytecode-generator.cc"; then
+      echo "researcher fix left the original case 44 label in place" >&2
+      exit 1
+    fi
+    fixes_json=$(jq -cn --arg sha "$FIX_PROPERTY_CASE_SHA256" \
+      '[{name: "property-case", patch: "experiments/fv8/patches/fv8-astnode-property-case.patch", sha256: $sha,
+         change: "AstTraversal: case 44 -> case 45 (Property is 45 in V8 12.2; 44 is OptionalChain, which made AsProperty() return nullptr)"}]')
+  fi
 
   echo "=== Install build-compatibility header"
   target="$SRC/deps/v8/build/build_config.h"
@@ -168,6 +200,7 @@ jq -n \
   --argjson patch_applied "$patch_applied" \
   --arg compat_sha "$(sha256sum "$COMPAT" | cut -d' ' -f1)" \
   --argjson compat_installed "$compat_installed" \
+  --argjson fixes "${fixes_json:-[]}" \
   --arg v8_options "$V8_OPTIONS" \
   --arg snapshot "$SNAPSHOT" \
   --arg configure "./configure $(printf '%s ' "${configure_args[@]}" | sed "s|--prefix=$RUNTIME|--prefix=<runtime-dir>|")" \
@@ -194,6 +227,8 @@ jq -n \
     fv8_patch_apply_options: (if $patch_applied then "patch -p2 -F0 --forward (from deps/v8/src)" else null end),
     compat_header: (if $compat_installed then "experiments/fv8/compat/build/build_config.h -> deps/v8/build/build_config.h" else null end),
     compat_header_sha256: (if $compat_installed then $compat_sha else null end),
+    fv8_patch_as_released: ($patch_applied and ($fixes | length == 0)),
+    researcher_fv8_fixes: $fixes,
     v8_options_baked_in: (if $v8_options == "none" then null else $v8_options end),
     node_snapshot: ($snapshot == "snapshot"),
     configure: ($configure | rtrimstr(" ")),

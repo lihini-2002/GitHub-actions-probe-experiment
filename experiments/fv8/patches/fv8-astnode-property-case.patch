@@ -1,0 +1,27 @@
+Researcher fix for FV8's released patch (NOT part of FV8). Opt-in: applied by
+build-node-runtime.sh only with fv8 fixes "property-case", after
+tools/fv8/patches/V8_patch_122.diff has been applied verbatim. Apply from
+deps/v8 with: patch -p1 -F0 --forward
+
+FV8's AstTraversal() (interpreter/bytecode-generator.cc) dispatches on numeric
+AstNode::NodeType values. Its "Property" branch is labelled `case 44` and
+calls pair.first->AsProperty(), but in V8 12.2 (both the authors' 12.2.281.21
+and Node.js's 12.2.281.27, whose AST node lists are identical) 44 is
+kOptionalChain and kProperty is 45. AsProperty() returns nullptr for any
+non-Property node, so the branch dereferences a null pointer whenever FV8
+traverses an untaken branch containing an optional chain (`a?.b`). The
+authors' own comment on that line reads "case 45". This changes the label to
+45 and nothing else; OptionalChain nodes then take the switch's default
+branch, like every other node type FV8 does not handle.
+
+--- a/src/interpreter/bytecode-generator.cc
++++ b/src/interpreter/bytecode-generator.cc
+@@ -2118,7 +2118,7 @@
+         break;
+       }
+       // FunctionLiteral
+-      case 44: { // case 45: {
++      case 45: { // case 45: {
+         auto node44 = static_cast<Property*>(pair.first->AsProperty());
+         visited.push_back(pair.first);
+ 

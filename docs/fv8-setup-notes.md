@@ -241,6 +241,43 @@ All of these are written to `fv8-metadata.json` and `experiment-manifest.json` f
   code. If forced execution breaks that step, rerun both workflows with
   `node_snapshot: no-snapshot`; that changes Node.js startup for both and is recorded.
 
+## 9a. FV8's released patch crashes Node.js's build; optional one-line fix
+
+**Observed (2026-10-14, run 38494602753, container experiment, `variant: fv8`).** With the FV8
+patch applied verbatim, all of V8 and Node.js compiled and linked with GCC 13, and V8's
+`mksnapshot` ran. Node.js's `node_mksnapshot`, which runs the new engine over Node's bootstrap
+JavaScript, then crashed: `Segmentation fault (core dumped)`, make error 139, before any
+`Found match for API` line. The hosted-VM workflow builds identical code and would fail the same
+way. **No FV8 runtime has been produced with the patch as released.**
+
+**Likely cause: a bug in the released patch, not in the port.** `AstTraversal()` dispatches on
+numeric `AstNode::NodeType` values. Computed from V8 12.2's `AST_NODE_LIST` (identical in the
+authors' 12.2.281.21 and Node's 12.2.281.27), ten of FV8's eleven case labels match the node
+type they cast to. `case 44` does not: FV8 handles it as `Property` (`pair.first->AsProperty()`),
+but 44 is `OptionalChain` and `Property` is 45. `AsProperty()` returns `nullptr` for a non-Property
+node, and FV8 then calls `node44->key()`. Any untaken branch that FV8 traverses and that contains
+an optional chain (`a?.b`) dereferences a null pointer. Node.js's internal JavaScript uses
+optional chaining. The authors' comment on that line reads `// case 45:`. This is the likely
+cause; it has not been confirmed with a stack trace.
+
+**Fix (opt-in, researcher change, not FV8):**
+[`experiments/fv8/patches/fv8-astnode-property-case.patch`](../experiments/fv8/patches/fv8-astnode-property-case.patch)
+changes `case 44:` to `case 45:` and nothing else (`OptionalChain` then takes the switch's
+`default:` branch, like every other node type FV8 does not handle). It is applied after the
+verbatim FV8 patch, with `patch -F0` and a SHA-256 check, only when the workflow input
+`fv8_fixes: property-case` is chosen (FV8 variant only). The default remains `none`, FV8 exactly
+as released.
+
+Recorded in every run: `runtime/build-info.json` (`fv8_patch_as_released`, `researcher_fv8_fixes`,
+`researcher-fix-apply.log`, the fix in `source-changes.diff`), `fv8-metadata.json` (provenance),
+`experiment-manifest.json` (`fv8_patch_as_released`, `fv8_researcher_fixes`). Results obtained with
+the fix describe "FV8 with one corrected case label", not FV8 as released.
+
+If the build still crashes with the fix, the cause is elsewhere. One candidate: FV8 keeps
+pointers to parser AST nodes in process-global vectors that outlive the parse that created them.
+Further changes to FV8 would then be needed, and should be decided separately rather than added
+here.
+
 ## 10. How probe output is recovered
 
 The probe is unchanged and writes its report with its default mechanism:
