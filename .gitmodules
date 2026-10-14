@@ -12,3 +12,6 @@
 	path = tools/fv8
 	url = https://github.com/wspr-ncsu/FV8.git
 	shallow = true
+[submodule "tools/pack-a-mal"]
+	path = tools/pack-a-mal
+	url = https://github.com/lyvd/Pack-A-Mal.git

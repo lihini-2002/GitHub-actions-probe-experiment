@@ -1,0 +1,192 @@
+name: Environment Probe - GitHub Ubuntu + Pack-A-Mal
+
+# GitHub Ubuntu VM -> Pack-A-Mal (wolfi-apk/analysis container) -> podman/gVisor
+# sandbox -> npm install -> probe.
+#
+# RESEARCHER-MODIFIED REPRODUCTION. At the pinned commit Pack-A-Mal only supports
+# the `wolfi` ecosystem (its npm package manager and Node sandbox were removed from
+# the OpenSSF fork). experiments/pack-a-mal/restore-npm-support.sh restores npm from
+# upstream ossf/package-analysis, and the workflow uses upstream's Node sandbox image
+# through Pack-A-Mal's own -sandbox-image flag. The applied diff is saved to the
+# results. The analysis still goes through Pack-A-Mal's run_analysis.sh; there is no
+# direct `npm install` fallback, and verification fails unless the probe report
+# comes out of the Pack-A-Mal sandbox. See docs/pack-a-mal-github-vm-setup.md.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pack-a-mal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      EXPECTED_PAM_SHA: 9af1cfb8868512021317b8a1901adea53db3d28b
+      RESULT_DIR: results/pack-a-mal-vm/${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch pinned Pack-A-Mal sources
+        run: git submodule update --init --depth 1 tools/pack-a-mal
+
+      - name: Verify pinned Pack-A-Mal sources
+        run: |
+          actual=$(git -C tools/pack-a-mal rev-parse HEAD)
+          if [ "$actual" != "$EXPECTED_PAM_SHA" ]; then
+            echo "::error::tools/pack-a-mal is at $actual, expected $EXPECTED_PAM_SHA"
+            exit 1
+          fi
+          echo "tools/pack-a-mal @ $actual"
+
+      - name: Apply researcher modification (restore npm support)
+        run: |
+          mkdir -p "$RESULT_DIR/setup"
+          experiments/pack-a-mal/restore-npm-support.sh tools/pack-a-mal "$RUNNER_TEMP/pam-upstream"
+          git -C tools/pack-a-mal add -N internal/pkgmanager/npm.go
+          git -C tools/pack-a-mal diff > "$RESULT_DIR/setup/pack-a-mal-modifications.patch"
+          git -C tools/pack-a-mal diff --stat
+
+      - name: Create result directories
+        run: |
+          mkdir -p "$RESULT_DIR"/{metadata,probe,setup,verification}
+          mkdir -p "$RESULT_DIR"/pack-a-mal/{dynamic-results,static-results,file-writes,analyzed-package,logs,strace}
+
+      # Outer-VM baseline. Kept in metadata/ only; never merged into probe output.
+      - name: Record GitHub Actions VM baseline
+        run: |
+          {
+            echo "=== TIMESTAMP ==="; date -u --iso-8601=seconds
+            echo; echo "=== GITHUB ACTIONS ==="
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo "GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+            echo "GITHUB_WORKFLOW=$GITHUB_WORKFLOW"
+            echo "GITHUB_SHA=$GITHUB_SHA"
+            echo; echo "=== RUNNER ==="
+            echo "RUNNER_OS=$RUNNER_OS"
+            echo "RUNNER_ARCH=$RUNNER_ARCH"
+            echo "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT"
+            echo; echo "=== OS ==="; cat /etc/os-release
+            echo; echo "=== KERNEL ==="; uname -a
+            echo; echo "=== CPU ==="; lscpu
+            echo; echo "=== MEMORY ==="; free -h
+            echo; echo "=== FILESYSTEM ==="; df -Th; echo; findmnt
+            echo; echo "=== TOOLS ==="
+            docker --version 2>&1 || true
+            podman --version 2>&1 || echo "podman: not installed on host"
+            runsc --version 2>&1 || echo "runsc: not installed on host (gVisor lives inside the analysis image)"
+            node --version 2>&1 || true
+            npm --version 2>&1 || true
+            make --version 2>&1 | head -1 || true
+          } > "$RESULT_DIR/metadata/github-vm-baseline.txt" 2>&1
+          docker version > "$RESULT_DIR/metadata/docker-version.txt" 2>&1 || true
+          docker info > "$RESULT_DIR/metadata/docker-info.txt" 2>&1 || true
+
+      - name: Record pinned Pack-A-Mal and upstream provenance
+        run: |
+          {
+            echo "Repository: https://github.com/lyvd/Pack-A-Mal"
+            echo "Commit: $(git -C tools/pack-a-mal rev-parse HEAD)"
+            echo "Commit date: $(git -C tools/pack-a-mal show -s --format=%cI HEAD)"
+            echo "Go module: $(sed -n 1p tools/pack-a-mal/go.mod)"
+            echo "Analysis image base: $(grep '^FROM ubuntu' tools/pack-a-mal/cmd/analyze/Dockerfile)"
+            echo "gVisor apt release: $(grep -o 'releases [0-9]*' tools/pack-a-mal/cmd/analyze/Dockerfile)"
+            echo "Closest OpenSSF base: ossf/package-analysis 2539ef69223780040e5d50dc2fa115b20a0c95df (2024-10-14)"
+          } > "$RESULT_DIR/metadata/pack-a-mal-version.txt"
+          cat "$RESULT_DIR/metadata/pack-a-mal-version.txt"
+
+      # Pack-A-Mal's own build target; the Go build and podman/gVisor install
+      # happen inside the image (cmd/analyze/Dockerfile), so the host needs
+      # nothing beyond Docker and make.
+      - name: Build Pack-A-Mal analysis image
+        working-directory: tools/pack-a-mal
+        run: |
+          make build/image/analysis 2>&1 | tee "$GITHUB_WORKSPACE/$RESULT_DIR/setup/build-analysis-image.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Record image versions
+        if: always()
+        run: |
+          docker images --digests > "$RESULT_DIR/metadata/docker-images.txt" 2>&1 || true
+          docker run --rm --entrypoint sh wolfi-apk/analysis -c \
+            'podman --version; runsc --version; cat /etc/os-release' \
+            > "$RESULT_DIR/metadata/analysis-image-tools.txt" 2>&1 || true
+
+      - name: Record npm sandbox image (upstream OpenSSF)
+        run: |
+          docker pull gcr.io/ossf-malware-analysis/dynamic-analysis:latest 2>&1 | tail -3
+          docker image inspect gcr.io/ossf-malware-analysis/dynamic-analysis:latest \
+            --format '{{json .RepoDigests}} created={{.Created}}' \
+            > "$RESULT_DIR/metadata/npm-sandbox-image.txt"
+          cat "$RESULT_DIR/metadata/npm-sandbox-image.txt"
+
+      - name: Record ecosystems the built analyzer accepts
+        run: |
+          docker run --rm wolfi-apk/analysis analyze -help \
+            > "$RESULT_DIR/pack-a-mal/analyze-help.txt" 2>&1 || true
+          grep -n -i 'ecosystem' "$RESULT_DIR/pack-a-mal/analyze-help.txt" || true
+
+      # The unmodified Pack-A-Mal entry point with the same local tarball used
+      # by the other experiments. A non-zero exit is an expected, recorded result.
+      - name: Run Pack-A-Mal dynamic analysis on the probe package
+        env:
+          RESULTS_DIR: ${{ github.workspace }}/results/pack-a-mal-vm/${{ github.run_id }}-${{ github.run_attempt }}/pack-a-mal/dynamic-results
+          STATIC_RESULTS_DIR: ${{ github.workspace }}/results/pack-a-mal-vm/${{ github.run_id }}-${{ github.run_attempt }}/pack-a-mal/static-results
+          FILE_WRITE_RESULTS_DIR: ${{ github.workspace }}/results/pack-a-mal-vm/${{ github.run_id }}-${{ github.run_attempt }}/pack-a-mal/file-writes
+          ANALYZED_PACKAGES_DIR: ${{ github.workspace }}/results/pack-a-mal-vm/${{ github.run_id }}-${{ github.run_attempt }}/pack-a-mal/analyzed-package
+          LOGS_DIR: ${{ github.workspace }}/results/pack-a-mal-vm/${{ github.run_id }}-${{ github.run_attempt }}/pack-a-mal/logs
+          STRACE_LOGS_DIR: ${{ github.workspace }}/results/pack-a-mal-vm/${{ github.run_id }}-${{ github.run_attempt }}/pack-a-mal/strace
+        run: |
+          set +e
+          args=(-nointeractive -mode dynamic -ecosystem npm
+                -sandbox-image gcr.io/ossf-malware-analysis/dynamic-analysis
+                -analysis-command /usr/local/bin/analyze-node.js
+                -package npm-probing-package
+                -local "$GITHUB_WORKSPACE/packages/npm-probing-package-0.1.0.tgz")
+          tools/pack-a-mal/scripts/run_analysis.sh -dryrun "${args[@]}" \
+            > "$RESULT_DIR/pack-a-mal/run-command-dryrun.txt" 2>&1
+          tools/pack-a-mal/scripts/run_analysis.sh "${args[@]}" \
+            2>&1 | tee "$RESULT_DIR/pack-a-mal/run-analysis.log"
+          echo "${PIPESTATUS[0]}" > "$RESULT_DIR/pack-a-mal/analysis-exit-code.txt"
+          echo "run_analysis.sh exit code: $(cat "$RESULT_DIR/pack-a-mal/analysis-exit-code.txt")"
+          exit 0
+
+      # Same recovery as the OpenSSF experiment: the sandbox filesystem is
+      # discarded, but every write() is kept in the file-write results.
+      - name: Recover probe report from Pack-A-Mal file-write results
+        if: always()
+        run: |
+          WRITES="$RESULT_DIR/pack-a-mal/file-writes"
+          zip=$(ls "$WRITES"/write_buffers_*.zip 2>/dev/null | head -1)
+          if [ -n "$zip" ] && [ -f "$WRITES/results.json" ]; then
+            rm -rf "$WRITES/buffers"
+            unzip -o -q "$zip" -d "$WRITES/buffers"
+            node scripts/reassemble-probe.mjs "$WRITES/results.json" "$WRITES/buffers" "$RESULT_DIR/probe"
+          else
+            echo "No file-write results from Pack-A-Mal; nothing to recover."
+          fi
+          find "$RESULT_DIR/probe" -type f -print
+
+      - name: Collect container state
+        if: always()
+        run: docker ps -a --no-trunc > "$RESULT_DIR/metadata/containers-after-run.txt" 2>&1 || true
+
+      - name: Verify the probe ran inside Pack-A-Mal and write manifest
+        id: verify
+        if: always()
+        run: experiments/pack-a-mal/verify-pack-a-mal-run.sh "$RESULT_DIR" "$EXPECTED_PAM_SHA"
+
+      - name: Upload result directory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pack-a-mal-vm-${{ github.run_id }}-${{ github.run_attempt }}
+          path: results/pack-a-mal-vm/${{ github.run_id }}-${{ github.run_attempt }}/
