@@ -1,0 +1,21 @@
+{
+  "account_id": "164237866526",
+  "region": "ap-southeast-2",
+  "availability_zone": "ap-southeast-2b",
+  "vpc_id": "vpc-00d8ff46de82538a6",
+  "subnet_id": "subnet-0e470510ea99bd23e",
+  "ami_id": "ami-0f5e1e0151e5b95ed",
+  "ami_owner": "099720109477",
+  "instance_type": "m7i.xlarge",
+  "name": "npm-research-ec2-dev",
+  "role_name": "npm-research-ec2-ssm-role",
+  "profile_name": "npm-research-ec2-ssm-profile",
+  "client_token": "npm-research-ec2-baseline-20261014-v1",
+  "tags": {
+    "Name": "npm-research-ec2-dev",
+    "Project": "package-environment-fingerprint",
+    "Environment": "ec2-ubuntu-development",
+    "Purpose": "research",
+    "ManagedBy": "research-experiment"
+  }
+}

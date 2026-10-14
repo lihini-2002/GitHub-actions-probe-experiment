@@ -1,0 +1,5 @@
+__pycache__/
+# Keep generated account inventory and host evidence local.
+state.json
+launch-request.json
+evidence/
