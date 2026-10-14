@@ -151,9 +151,10 @@ jobs:
                 -analysis-command /usr/local/bin/analyze-node.js
                 -package npm-probing-package
                 -local "$GITHUB_WORKSPACE/packages/npm-probing-package-0.1.0.tgz")
-          tools/pack-a-mal/scripts/run_analysis.sh -dryrun "${args[@]}" \
+          # run_analysis.sh is committed non-executable (mode 100644), so invoke it via bash.
+          bash tools/pack-a-mal/scripts/run_analysis.sh -dryrun "${args[@]}" \
             > "$RESULT_DIR/pack-a-mal/run-command-dryrun.txt" 2>&1
-          tools/pack-a-mal/scripts/run_analysis.sh "${args[@]}" \
+          bash tools/pack-a-mal/scripts/run_analysis.sh "${args[@]}" \
             2>&1 | tee "$RESULT_DIR/pack-a-mal/run-analysis.log"
           echo "${PIPESTATUS[0]}" > "$RESULT_DIR/pack-a-mal/analysis-exit-code.txt"
           echo "run_analysis.sh exit code: $(cat "$RESULT_DIR/pack-a-mal/analysis-exit-code.txt")"
@@ -165,7 +166,7 @@ jobs:
         if: always()
         run: |
           WRITES="$RESULT_DIR/pack-a-mal/file-writes"
-          zip=$(ls "$WRITES"/write_buffers_*.zip 2>/dev/null | head -1)
+          zip=$(find "$WRITES" -maxdepth 1 -name 'write_buffers_*.zip' | head -1)
           if [ -n "$zip" ] && [ -f "$WRITES/results.json" ]; then
             rm -rf "$WRITES/buffers"
             unzip -o -q "$zip" -d "$WRITES/buffers"
@@ -173,7 +174,7 @@ jobs:
           else
             echo "No file-write results from Pack-A-Mal; nothing to recover."
           fi
-          find "$RESULT_DIR/probe" -type f -print
+          find "$RESULT_DIR/probe" -type f -print || true
 
       - name: Collect container state
         if: always()
