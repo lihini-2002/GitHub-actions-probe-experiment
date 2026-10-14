@@ -113,7 +113,8 @@ for f in "$SRC"/vv8-*.log; do
 done
 
 signal=$(grep -m1 -oE 'received signal [A-Z]+' "$D/node_mksnapshot-backtrace.txt" | awk '{print $3}')
-first_frames=$(grep -E '^#[0-9]+ ' "$D/node_mksnapshot-backtrace.txt" | head -12 | jq -Rn '[inputs]')
+first_frames=$(sed -n '/^=== crashing thread backtrace/,/^=== crashing frame/p' "$D/node_mksnapshot-backtrace.txt" \
+  | grep -E '^#[0-9]+ ' | head -12 | jq -Rn '[inputs]')
 jq -n \
   --argjson plain_status "$plain_status" \
   --argjson gdb_status "$gdb_status" \
