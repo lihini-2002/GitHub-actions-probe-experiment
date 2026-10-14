@@ -57,6 +57,13 @@ on:
           - none
           - property-case
         default: none
+      crash_diagnostics:
+        description: >-
+          If the runtime build fails in Node's snapshot step, re-run that step
+          under gdb and save the backtrace and VisibleV8 logs (diagnostics only;
+          FV8 and Node.js are not changed)
+        type: boolean
+        default: false
       rebuild_runtime:
         description: Ignore the cached container-built runtime and rebuild Node.js from source (~70-80 min)
         type: boolean
@@ -227,6 +234,16 @@ jobs:
           # runtime so it is restored with it from the cache.
           bash experiments/fv8-container/record-container-layer.sh \
             "${{ steps.cfg.outputs.runtime }}/fv8-experiment" runtime-build
+
+      # Opt-in: only after the build has already failed. Runs the exact
+      # node_mksnapshot command under gdb in the same build tree.
+      - name: Diagnose node_mksnapshot crash (opt-in)
+        if: ${{ failure() && steps.build.outcome == 'failure' && inputs.crash_diagnostics }}
+        run: |
+          bash experiments/fv8-container/diagnose-mksnapshot-crash.sh \
+            "$RUNNER_TEMP/node-build/node" \
+            "$RUNNER_TEMP/setup-build.log" \
+            "${{ steps.cfg.outputs.out }}"
 
       - name: Save runtime to cache
         if: ${{ steps.build.outcome == 'success' }}
