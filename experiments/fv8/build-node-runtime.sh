@@ -13,12 +13,13 @@
 # runtime from the actions/cache entry.
 #
 # Usage: build-node-runtime.sh <fv8|control> <work-dir> <runtime-dir> <v8-options|none> \
-#          <snapshot|no-snapshot> [none|property-case]
+#          <snapshot|no-snapshot> [none|property-case|property-case+parser-reset]
 #
 # The optional 6th argument selects researcher fixes to FV8's released patch
 # (default none = FV8 exactly as released). property-case applies
-# patches/fv8-astnode-property-case.patch after the FV8 patch (see that file);
-# it only applies to the fv8 variant.
+# patches/fv8-astnode-property-case.patch after the FV8 patch;
+# property-case+parser-reset also applies patches/fv8-parser-reset-declared-functions.patch
+# (see those files). Fixes only apply to the fv8 variant.
 #
 # no-snapshot adds --without-node-snapshot. Node's build runs the freshly
 # built engine (node_mksnapshot) over Node's bootstrap code; this option exists
@@ -44,6 +45,7 @@ NODE_V8_VERSION=12.2.281.27
 FV8_COMMIT=57fc2b2699563316958603934aba572907171162
 FV8_PATCH_SHA256=6dc767202b59eb770feeea27135ffd9455b4b6b2f1f0b9e97752de34880a3c39
 FIX_PROPERTY_CASE_SHA256=7a40be232b78e9a9fb6a8c3a9a4a2564f383bc0537c24cb135af42da24d09169
+FIX_PARSER_RESET_SHA256=47b24fde1b8ff8ef7284dde915f920eb9d2e58bdc797ef269c1ae8fa5b3af2cb
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
@@ -55,7 +57,7 @@ INFO="$RUNTIME/fv8-experiment"
 
 case "$VARIANT" in fv8|control) ;; *) echo "variant must be fv8 or control" >&2; exit 2 ;; esac
 case "$SNAPSHOT" in snapshot|no-snapshot) ;; *) echo "snapshot must be snapshot or no-snapshot" >&2; exit 2 ;; esac
-case "$FV8_FIXES" in none|property-case) ;; *) echo "fv8 fixes must be none or property-case" >&2; exit 2 ;; esac
+case "$FV8_FIXES" in none|property-case|property-case+parser-reset) ;; *) echo "fv8 fixes must be none, property-case or property-case+parser-reset" >&2; exit 2 ;; esac
 if [ "$VARIANT" = control ] && [ "$FV8_FIXES" != none ]; then
   echo "fv8 fixes apply to the fv8 variant only" >&2; exit 2
 fi
@@ -114,25 +116,36 @@ if [ "$VARIANT" = fv8 ]; then
   grep -q 'vv8-%ld-%d-%d-%s.%%d.log' "$SRC/deps/v8/src/runtime/runtime-test.cc"
   patch_applied=true
 
+  # Researcher fixes (not FV8), applied in order after the verbatim FV8 patch.
   fixes_json='[]'
-  if [ "$FV8_FIXES" = property-case ]; then
-    echo "=== Apply researcher fix (not FV8): fv8-astnode-property-case.patch"
-    fix="$HERE/patches/fv8-astnode-property-case.patch"
-    echo "$FIX_PROPERTY_CASE_SHA256  $fix" | sha256sum -c -
+  apply_fix() {  # <name> <patch file> <sha256> <description>
+    local name=$1 fix="$HERE/patches/$2" sha=$3 change=$4
+    echo "=== Apply researcher fix (not FV8): $2"
+    echo "$sha  $fix" | sha256sum -c -
     (cd "$SRC/deps/v8" && patch -p1 -F0 --forward --batch --no-backup-if-mismatch < "$fix") \
-      | tee "$INFO/researcher-fix-apply.log"
+      | tee -a "$INFO/researcher-fix-apply.log"
     if grep -i 'fuzz\|offset\|FAILED' "$INFO/researcher-fix-apply.log"; then
-      echo "researcher fix did not apply exactly" >&2
+      echo "researcher fix $2 did not apply exactly" >&2
       exit 1
     fi
-    grep -q 'case 45: { // case 45: {' "$SRC/deps/v8/src/interpreter/bytecode-generator.cc"
-    if grep -q 'case 44: { // case 45: {' "$SRC/deps/v8/src/interpreter/bytecode-generator.cc"; then
-      echo "researcher fix left the original case 44 label in place" >&2
-      exit 1
-    fi
-    fixes_json=$(jq -cn --arg sha "$FIX_PROPERTY_CASE_SHA256" \
-      '[{name: "property-case", patch: "experiments/fv8/patches/fv8-astnode-property-case.patch", sha256: $sha,
-         change: "AstTraversal: case 44 -> case 45 (Property is 45 in V8 12.2; 44 is OptionalChain, which made AsProperty() return nullptr)"}]')
+    fixes_json=$(jq -c --arg n "$name" --arg p "experiments/fv8/patches/$2" --arg sha "$sha" --arg c "$change" \
+      '. + [{name: $n, patch: $p, sha256: $sha, change: $c}]' <<< "$fixes_json")
+  }
+  case "$FV8_FIXES" in
+    property-case|property-case+parser-reset)
+      apply_fix property-case fv8-astnode-property-case.patch "$FIX_PROPERTY_CASE_SHA256" \
+        "AstTraversal: case 44 -> case 45 (Property is 45 in V8 12.2; 44 is OptionalChain, which made AsProperty() return nullptr)"
+      grep -q 'case 45: { // case 45: {' "$SRC/deps/v8/src/interpreter/bytecode-generator.cc"
+      if grep -q 'case 44: { // case 45: {' "$SRC/deps/v8/src/interpreter/bytecode-generator.cc"; then
+        echo "researcher fix left the original case 44 label in place" >&2
+        exit 1
+      fi
+      ;;
+  esac
+  if [ "$FV8_FIXES" = property-case+parser-reset ]; then
+    apply_fix parser-reset fv8-parser-reset-declared-functions.patch "$FIX_PARSER_RESET_SHA256" \
+      "Parser constructor clears FV8's global declared_functions/declared_functions_names, so AstTraversal never follows pointers into freed Zones of earlier parses"
+    grep -q 'declared_functions.clear();' "$SRC/deps/v8/src/parsing/parser.cc"
   fi
 
   echo "=== Install build-compatibility header"

@@ -1,0 +1,39 @@
+Researcher fix for FV8's released patch (NOT part of FV8). Opt-in: applied by
+build-node-runtime.sh only with fv8 fixes "property-case+parser-reset", after
+tools/fv8/patches/V8_patch_122.diff and fv8-astnode-property-case.patch.
+Apply from deps/v8 with: patch -p1 -F0 --forward
+
+FV8 adds every declared function (FunctionLiteral*) and its name
+(AstRawString*) to two process-global vectors in Parser::ParseFunctionLiteral
+(parsing/parser.cc) and never clears them. Both point into the parse's Zone,
+which V8 frees once that compilation finishes. AstTraversal()
+(interpreter/bytecode-generator.cc) later compares names by pointer and, on a
+match, reads declared_functions[i]->node_type(). Once freed Zone memory is
+reused, a stale entry can match and FV8 dereferences a dangling pointer.
+Observed: run 38532680501 (gdb): SIGSEGV in
+BytecodeGenerator::AstTraversal <- VisitIfStatement while compiling
+node:internal/options in node_mksnapshot, faulting on `mov 0x4(%rax),%eax;
+and $0x3f` (reading NodeType) with rax = 0xd6000020e18df006.
+
+This clears both vectors at the end of the Parser constructor, i.e. at the
+start of every parse, so they only hold nodes of the AST that is about to be
+compiled (which is alive during bytecode generation). Behaviour change: FV8
+no longer follows a function name into functions declared in previously
+compiled scripts or earlier parses; within one compilation (with --no-lazy,
+a whole script) it still does. Not addressed: FV8's AstTraversal sorts and
+de-duplicates declared_functions_names but not declared_functions, so the
+index it uses can pair a name with a different function (wrong, not unsafe).
+
+--- a/src/parsing/parser.cc
++++ b/src/parsing/parser.cc
+@@ -484,6 +484,10 @@
+        ++feature) {
+     use_counts_[feature] = 0;
+   }
++  // Researcher fix (not FV8): start each parse with empty FV8 lists, so
++  // AstTraversal only follows FunctionLiterals of the AST being compiled.
++  declared_functions.clear();
++  declared_functions_names.clear();
+ }
+ 
+ void Parser::InitializeEmptyScopeChain(ParseInfo* info) {

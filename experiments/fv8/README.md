@@ -42,6 +42,7 @@ The workflow fails if any pin, the patch hash, or the bundled V8 version differs
 | --- | --- |
 | `build-node-runtime.sh` | Fetch Node.js, apply the FV8 patch (fv8) or nothing (control), configure, build, install; writes `fv8-experiment/build-info.json` into the runtime |
 | `patches/fv8-astnode-property-case.patch` | Opt-in researcher fix to FV8's `case 44` (not FV8; see docs/fv8-setup-notes.md §9a) |
+| `patches/fv8-parser-reset-declared-functions.patch` | Opt-in researcher fix: clear FV8's global function lists per parse (dangling-pointer crash; not FV8; §9a) |
 | `compat/build/build_config.h` | Chromium `BUILDFLAG` macros the patch includes (not FV8 code; FV8 variant only) |
 | `record-environment.sh` | Outer environment, before any runtime is built or run → `environment-metadata.json` |
 | `inspect-fv8-release.sh` | Reads the authors' Chromium `.deb` (versions, hashes, FV8 strings); never runs it |
@@ -68,7 +69,7 @@ Inputs (use the same values for both workflows):
 | `npm_host` | `fv8-node` | `fv8-node`: npm also runs on the experiment runtime. `system-node`: npm runs on setup-node 22, only lifecycle scripts on the experiment runtime. |
 | `v8_options` | `--no-lazy` | V8 flags baked into the runtime (`--no-lazy` is the authors' README example), or `none` |
 | `node_snapshot` | `snapshot` | `no-snapshot` builds with `--without-node-snapshot`, only if the build's snapshot step fails under FV8 |
-| `fv8_fixes` (FV8 workflow only) | `none` | `property-case` also applies the one-line researcher fix `patches/fv8-astnode-property-case.patch`; with `none` (FV8 as released) Node's build crashes in `node_mksnapshot`. See docs/fv8-setup-notes.md §9a |
+| `fv8_fixes` (FV8 workflow only) | `none` | `property-case`: one-line fix `patches/fv8-astnode-property-case.patch`. `property-case+parser-reset`: also `patches/fv8-parser-reset-declared-functions.patch`. With `none` and with `property-case` Node's build crashes in `node_mksnapshot`. See docs/fv8-setup-notes.md §9a |
 | `rebuild_runtime` | `false` | Ignore the cached runtime |
 
 The first run of each variant/input combination builds Node.js (~1.5–2 h); later runs restore it

@@ -1,0 +1,50 @@
+{
+    "Snapshots": [
+        {
+            "Tags": [
+                {
+                    "Key": "SourceInstance",
+                    "Value": "i-068e4b9f4f532e9f7"
+                },
+                {
+                    "Key": "ManagedBy",
+                    "Value": "research-experiment"
+                },
+                {
+                    "Key": "Project",
+                    "Value": "package-environment-fingerprint"
+                },
+                {
+                    "Key": "Name",
+                    "Value": "npm-research-clean-ec2-baseline"
+                },
+                {
+                    "Key": "Environment",
+                    "Value": "ec2-ubuntu-development"
+                },
+                {
+                    "Key": "BaselineRuns",
+                    "Value": "10"
+                },
+                {
+                    "Key": "Purpose",
+                    "Value": "scanner-experiment-baseline"
+                }
+            ],
+            "StorageTier": "standard",
+            "TransferType": "standard",
+            "CompletionTime": "2026-10-14T09:43:30.232000+00:00",
+            "FullSnapshotSizeInBytes": 11768168448,
+            "SnapshotId": "snap-0aaddee2fea255e7d",
+            "VolumeId": "vol-02f480f3d2a065927",
+            "State": "completed",
+            "StartTime": "2026-10-14T09:39:03.552000+00:00",
+            "Progress": "100%",
+            "OwnerId": "164237866526",
+            "Description": "Created by CreateImage(i-068e4b9f4f532e9f7) for ami-0b3373c3f61239eec",
+            "VolumeSize": 100,
+            "Encrypted": true,
+            "KmsKeyId": "arn:aws:kms:ap-southeast-2:164237866526:key/6d337d63-610f-46db-96f3-41b7c74099fd"
+        }
+    ]
+}

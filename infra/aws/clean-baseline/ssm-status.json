@@ -1,0 +1,19 @@
+{
+    "InstanceInformationList": [
+        {
+            "InstanceId": "i-068e4b9f4f532e9f7",
+            "PingStatus": "Online",
+            "LastPingDateTime": "2026-10-14T15:14:33.787000+05:30",
+            "AgentVersion": "3.3.4793.0",
+            "IsLatestVersion": false,
+            "PlatformType": "Linux",
+            "PlatformName": "Ubuntu",
+            "PlatformVersion": "24.04",
+            "ResourceType": "EC2Instance",
+            "IPAddress": "172.31.44.147",
+            "ComputerName": "ip-172-31-44-147.ap-southeast-2.compute.internal",
+            "SourceId": "i-068e4b9f4f532e9f7",
+            "SourceType": "AWS::EC2::Instance"
+        }
+    ]
+}

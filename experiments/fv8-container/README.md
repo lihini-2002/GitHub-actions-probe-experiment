@@ -12,3 +12,4 @@ The FV8 build, harness and checks are the hosted-VM experiment's scripts in
 | `record-container-layer.sh` | Snapshot of OS, kernel, PID 1, cgroup/limits, mounts, hostname, marker files → `container/<label>.{json,txt}` |
 | `verify-container-layer.sh` | Checks that the build, runtime, npm and the probe ran in the job container → `checks/container.json` |
 | `write-container-metadata.sh` | `container-metadata.json` (outer runner / job container / analysis layers), container fields in `experiment-manifest.json`, `README.md` |
+| `diagnose-mksnapshot-crash.sh` | Opt-in (`crash_diagnostics`): after a build failure in `node_mksnapshot`, replays it under gdb and saves the backtrace and VisibleV8 logs → `diagnostics/` |

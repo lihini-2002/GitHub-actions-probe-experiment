@@ -1,0 +1,104 @@
+{
+  "ImageId": "ami-0b3373c3f61239eec",
+  "InstanceType": "m7i.xlarge",
+  "MinCount": 1,
+  "MaxCount": 1,
+  "IamInstanceProfile": {
+    "Name": "npm-research-ec2-ssm-profile"
+  },
+  "MetadataOptions": {
+    "HttpTokens": "required",
+    "HttpEndpoint": "enabled",
+    "HttpPutResponseHopLimit": 1,
+    "InstanceMetadataTags": "disabled"
+  },
+  "NetworkInterfaces": [
+    {
+      "DeviceIndex": 0,
+      "SubnetId": "subnet-0e470510ea99bd23e",
+      "Groups": [
+        "sg-06b02185a23e02db1"
+      ],
+      "AssociatePublicIpAddress": true,
+      "DeleteOnTermination": true
+    }
+  ],
+  "BlockDeviceMappings": [
+    {
+      "DeviceName": "/dev/sda1",
+      "Ebs": {
+        "VolumeSize": 100,
+        "VolumeType": "gp3",
+        "Encrypted": true,
+        "Iops": 3000,
+        "Throughput": 125,
+        "DeleteOnTermination": true
+      }
+    }
+  ],
+  "TagSpecifications": [
+    {
+      "ResourceType": "instance",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "npm-research-baseline-restored"
+        },
+        {
+          "Key": "Project",
+          "Value": "package-environment-fingerprint"
+        },
+        {
+          "Key": "Purpose",
+          "Value": "scanner-experiment-baseline"
+        },
+        {
+          "Key": "ManagedBy",
+          "Value": "research-experiment"
+        }
+      ]
+    },
+    {
+      "ResourceType": "volume",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "npm-research-baseline-restored"
+        },
+        {
+          "Key": "Project",
+          "Value": "package-environment-fingerprint"
+        },
+        {
+          "Key": "Purpose",
+          "Value": "scanner-experiment-baseline"
+        },
+        {
+          "Key": "ManagedBy",
+          "Value": "research-experiment"
+        }
+      ]
+    },
+    {
+      "ResourceType": "network-interface",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "npm-research-baseline-restored"
+        },
+        {
+          "Key": "Project",
+          "Value": "package-environment-fingerprint"
+        },
+        {
+          "Key": "Purpose",
+          "Value": "scanner-experiment-baseline"
+        },
+        {
+          "Key": "ManagedBy",
+          "Value": "research-experiment"
+        }
+      ]
+    }
+  ]
+}

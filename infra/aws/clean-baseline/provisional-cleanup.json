@@ -1,0 +1,13 @@
+{
+  "superseded_image": "ami-02d706ba7627548ab",
+  "superseded_snapshot": "snap-0d86784ad837c857d",
+  "replacement_image": "ami-0b3373c3f61239eec",
+  "replacement_snapshot": "snap-0aaddee2fea255e7d",
+  "deregister_response": {
+    "Return": true,
+    "DeleteSnapshotResults": []
+  },
+  "delete_snapshot_response": {},
+  "completed_at": "2026-10-14T09:45:07.654757+00:00",
+  "source_instance_untouched": true
+}

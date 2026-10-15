@@ -1,0 +1,23 @@
+{
+  "checked_at": "2026-10-14T09:40:23.668509+00:00",
+  "scanners_installed": false,
+  "scanner_submodules_initialized": false,
+  "docker_gvisor_installed": false,
+  "credential_files_checked": "no AWS credentials or Git credential files in ubuntu/root/ssm-user homes",
+  "base_development_packages": [
+    "build-essential\t12.10ubuntu1",
+    "ca-certificates\t20260601~24.04.1",
+    "curl\t8.5.0-2ubuntu10.15",
+    "git\t1:2.43.0-1ubuntu7.3",
+    "jq\t1.7.1-3ubuntu0.24.04.2",
+    "python3\t3.12.3-0ubuntu2.1",
+    "unzip\t6.0-28ubuntu4.1",
+    "wget\t1.21.4-1ubuntu4.5",
+    "xz-utils\t5.6.1+really5.4.5-1ubuntu0.3",
+    "zip\t3.0-13ubuntu0.2"
+  ],
+  "node": "v22.23.3",
+  "npm": "10.9.9",
+  "successful_runs": 10,
+  "image_scope": "private same-account post-baseline machine state including repository, npm cache, results and normal OS/SSM artifacts"
+}

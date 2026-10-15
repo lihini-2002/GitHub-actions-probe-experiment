@@ -273,10 +273,43 @@ Recorded in every run: `runtime/build-info.json` (`fv8_patch_as_released`, `rese
 `experiment-manifest.json` (`fv8_patch_as_released`, `fv8_researcher_fixes`). Results obtained with
 the fix describe "FV8 with one corrected case label", not FV8 as released.
 
-If the build still crashes with the fix, the cause is elsewhere. One candidate: FV8 keeps
-pointers to parser AST nodes in process-global vectors that outlive the parse that created them.
-Further changes to FV8 would then be needed, and should be decided separately rather than added
-here.
+
+**Result with `property-case` (2026-10-14, runs 38505885979 and 38532680501): still crashes.** The
+`case 44` bug is real but was not this crash. Run 38532680501 replayed the failing step under gdb
+(`crash_diagnostics: true`):
+
+```text
+SIGSEGV in v8::internal::interpreter::BytecodeGenerator::AstTraversal(AstNode*)
+  <- BytecodeGenerator::VisitIfStatement <- VisitStatements <- GenerateBytecodeBody
+  <- ... Compiler::GetWrappedFunction <- ScriptCompiler::CompileFunctionInternal
+faulting instruction: mov 0x4(%rax),%eax ; and $0x3f,%eax   (reads AstNode::NodeType)
+rax = 0xd6000020e18df006                                    (not a valid pointer)
+```
+
+VisibleV8's log shows it happened while compiling `node:internal/options`, after about 14 Node.js
+modules had been compiled. **Cause (from FV8's code and the trace):** FV8 appends every declared
+function (`FunctionLiteral*`) and its name (`AstRawString*`) to two process-global vectors and
+never clears them. Both point into the parse's Zone, which V8 frees after each compilation.
+`AstTraversal` compares names by pointer and, on a match, reads `declared_functions[i]->node_type()`.
+Once freed memory is reused, a stale entry matches and FV8 reads through a dangling pointer. This
+is a memory-safety bug in the released FV8 code; whether it crashes depends on how memory is reused.
+
+**Second fix (opt-in, researcher change, not FV8):**
+[`experiments/fv8/patches/fv8-parser-reset-declared-functions.patch`](../experiments/fv8/patches/fv8-parser-reset-declared-functions.patch)
+clears both vectors at the end of V8's `Parser` constructor (four added lines), so they only ever
+hold nodes of the AST about to be compiled. Selected with `fv8_fixes: property-case+parser-reset`
+(both fixes, in order). **Behaviour change:** FV8 no longer follows a function name into functions
+declared in earlier parses or other scripts (which, as released, reads freed memory). Within one
+compilation (with `--no-lazy`, a whole script) it still does. Assumes parsing and compilation on
+one thread, as in `node_mksnapshot` and Node.js's module loading; FV8's vectors are not
+thread-safe either way.
+
+**Upstream issue noted, not changed:** `AstTraversal` sorts and de-duplicates
+`declared_functions_names` but not `declared_functions`, then indexes both with the same `i`, so a
+matched name can be paired with a different function. That is wrong, but not unsafe.
+
+`fv8_fixes` values: `none` (FV8 as released: crashes), `property-case` (crashes, as above),
+`property-case+parser-reset` (both fixes). The workflow records which one was used.
 
 ## 10. How probe output is recovered
 

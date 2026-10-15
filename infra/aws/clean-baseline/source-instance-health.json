@@ -1,0 +1,44 @@
+{
+    "InstanceStatuses": [
+        {
+            "AvailabilityZone": "ap-southeast-2b",
+            "AvailabilityZoneId": "apse2-az3",
+            "Operator": {
+                "Managed": false,
+                "HiddenByDefault": false
+            },
+            "InstanceId": "i-068e4b9f4f532e9f7",
+            "InstanceState": {
+                "Code": 16,
+                "Name": "running"
+            },
+            "InstanceStatus": {
+                "Details": [
+                    {
+                        "Name": "reachability",
+                        "Status": "passed"
+                    }
+                ],
+                "Status": "ok"
+            },
+            "SystemStatus": {
+                "Details": [
+                    {
+                        "Name": "reachability",
+                        "Status": "passed"
+                    }
+                ],
+                "Status": "ok"
+            },
+            "AttachedEbsStatus": {
+                "Details": [
+                    {
+                        "Name": "reachability",
+                        "Status": "passed"
+                    }
+                ],
+                "Status": "ok"
+            }
+        }
+    ]
+}

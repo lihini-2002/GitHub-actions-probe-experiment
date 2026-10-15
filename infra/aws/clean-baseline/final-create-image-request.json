@@ -1,0 +1,74 @@
+{
+  "InstanceId": "i-068e4b9f4f532e9f7",
+  "Name": "npm-research-clean-ec2-baseline-complete-20261014",
+  "Description": "Scanner-free Ubuntu 24.04 after 10 new normal npm baseline runs; original excluded after automatic package updates; Node22.23.3 npm10.9.9",
+  "NoReboot": false,
+  "TagSpecifications": [
+    {
+      "ResourceType": "image",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "npm-research-clean-ec2-baseline"
+        },
+        {
+          "Key": "Project",
+          "Value": "package-environment-fingerprint"
+        },
+        {
+          "Key": "Purpose",
+          "Value": "scanner-experiment-baseline"
+        },
+        {
+          "Key": "Environment",
+          "Value": "ec2-ubuntu-development"
+        },
+        {
+          "Key": "ManagedBy",
+          "Value": "research-experiment"
+        },
+        {
+          "Key": "SourceInstance",
+          "Value": "i-068e4b9f4f532e9f7"
+        },
+        {
+          "Key": "BaselineRuns",
+          "Value": "10"
+        }
+      ]
+    },
+    {
+      "ResourceType": "snapshot",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "npm-research-clean-ec2-baseline"
+        },
+        {
+          "Key": "Project",
+          "Value": "package-environment-fingerprint"
+        },
+        {
+          "Key": "Purpose",
+          "Value": "scanner-experiment-baseline"
+        },
+        {
+          "Key": "Environment",
+          "Value": "ec2-ubuntu-development"
+        },
+        {
+          "Key": "ManagedBy",
+          "Value": "research-experiment"
+        },
+        {
+          "Key": "SourceInstance",
+          "Value": "i-068e4b9f4f532e9f7"
+        },
+        {
+          "Key": "BaselineRuns",
+          "Value": "10"
+        }
+      ]
+    }
+  ]
+}

@@ -192,12 +192,12 @@ jq -n \
     provenance: {
       from_fv8_authors_unmodified: ["tools/fv8/patches/V8_patch_122.diff (applied verbatim, no fuzz)"],
       inspected_not_executed: ["tools/fv8/deb_files/chromium-browser-stable_122.0.6261.111-1_amd64.deb"],
-      researcher_reconstruction: [
+      researcher_reconstruction: ([
         "choice of Node.js main@07f481cf (V8 12.2.281.27) as the host for the patch",
         "experiments/fv8/compat/build/build_config.h (Chromium BUILDFLAG macros; no FV8 logic)",
         "V8 flags baked in with configure --v8-options (authors pass --js-flags in Chromium)",
         "npm harness: PATH-based lifecycle node selection, canary smoke package, verification"
-      ] + [($build_info.researcher_fv8_fixes // [])[] | "researcher fix to FV8 code: \(.patch) (\(.change))"]
+      ] + [($build_info.researcher_fv8_fixes // [])[] | "researcher fix to FV8 code: \(.patch) (\(.change))"])
     }
   }' > "$OUT/fv8-metadata.json"
 

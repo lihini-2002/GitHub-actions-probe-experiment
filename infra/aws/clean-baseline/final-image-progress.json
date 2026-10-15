@@ -1,0 +1,83 @@
+{
+    "Images": [
+        {
+            "PlatformDetails": "Linux/UNIX",
+            "UsageOperation": "RunInstances",
+            "BlockDeviceMappings": [
+                {
+                    "Ebs": {
+                        "DeleteOnTermination": true,
+                        "Iops": 3000,
+                        "SnapshotId": "snap-0aaddee2fea255e7d",
+                        "VolumeSize": 100,
+                        "VolumeType": "gp3",
+                        "Throughput": 125,
+                        "Encrypted": true
+                    },
+                    "DeviceName": "/dev/sda1"
+                },
+                {
+                    "DeviceName": "/dev/sdb",
+                    "VirtualName": "ephemeral0"
+                },
+                {
+                    "DeviceName": "/dev/sdc",
+                    "VirtualName": "ephemeral1"
+                }
+            ],
+            "Description": "Scanner-free Ubuntu 24.04 after 10 new normal npm baseline runs; original excluded after automatic package updates; Node22.23.3 npm10.9.9",
+            "EnaSupport": true,
+            "Hypervisor": "xen",
+            "Name": "npm-research-clean-ec2-baseline-complete-20261014",
+            "RootDeviceName": "/dev/sda1",
+            "RootDeviceType": "ebs",
+            "SriovNetSupport": "simple",
+            "Tags": [
+                {
+                    "Key": "SourceInstance",
+                    "Value": "i-068e4b9f4f532e9f7"
+                },
+                {
+                    "Key": "Purpose",
+                    "Value": "scanner-experiment-baseline"
+                },
+                {
+                    "Key": "Name",
+                    "Value": "npm-research-clean-ec2-baseline"
+                },
+                {
+                    "Key": "Environment",
+                    "Value": "ec2-ubuntu-development"
+                },
+                {
+                    "Key": "BaselineRuns",
+                    "Value": "10"
+                },
+                {
+                    "Key": "ManagedBy",
+                    "Value": "research-experiment"
+                },
+                {
+                    "Key": "Project",
+                    "Value": "package-environment-fingerprint"
+                }
+            ],
+            "VirtualizationType": "hvm",
+            "BootMode": "uefi-preferred",
+            "ImdsSupport": "v2.0",
+            "SourceInstanceId": "i-068e4b9f4f532e9f7",
+            "DeregistrationProtection": "disabled",
+            "SourceImageId": "ami-0f5e1e0151e5b95ed",
+            "SourceImageRegion": "ap-southeast-2",
+            "FreeTierEligible": true,
+            "ImageId": "ami-0b3373c3f61239eec",
+            "ImageLocation": "164237866526/npm-research-clean-ec2-baseline-complete-20261014",
+            "State": "pending",
+            "OwnerId": "164237866526",
+            "CreationDate": "2026-10-14T09:37:33.000Z",
+            "Public": false,
+            "Architecture": "x86_64",
+            "ImageType": "machine"
+        }
+    ]
+}

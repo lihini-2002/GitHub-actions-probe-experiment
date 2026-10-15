@@ -1,0 +1,71 @@
+{
+  "environment": "aws-ec2-ubuntu-development-host",
+  "image_id": "ami-0b3373c3f61239eec",
+  "snapshot_id": "snap-0aaddee2fea255e7d",
+  "state": "available",
+  "created_at": "2026-10-14T09:37:33.000Z",
+  "source_instance_id": "i-068e4b9f4f532e9f7",
+  "source_ami_id": "ami-0f5e1e0151e5b95ed",
+  "region": "ap-southeast-2",
+  "ubuntu_version": "Ubuntu 24.04.5 LTS",
+  "kernel_version": "7.0.0-1014-aws",
+  "node_version": "v22.23.3",
+  "npm_version": "10.9.9",
+  "included_run_numbers": [
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "excluded_original_run": 1,
+  "exclusion_reason": "Automatic apt updates between original and new runs",
+  "tags": [
+    {
+      "Key": "SourceInstance",
+      "Value": "i-068e4b9f4f532e9f7"
+    },
+    {
+      "Key": "Purpose",
+      "Value": "scanner-experiment-baseline"
+    },
+    {
+      "Key": "Name",
+      "Value": "npm-research-clean-ec2-baseline"
+    },
+    {
+      "Key": "Environment",
+      "Value": "ec2-ubuntu-development"
+    },
+    {
+      "Key": "BaselineRuns",
+      "Value": "10"
+    },
+    {
+      "Key": "ManagedBy",
+      "Value": "research-experiment"
+    },
+    {
+      "Key": "Project",
+      "Value": "package-environment-fingerprint"
+    }
+  ],
+  "private": true,
+  "encrypted": true,
+  "root_volume_size_gib": 100,
+  "software_audit": "software-audit.json",
+  "package_manifest": "../../../results/ec2/baseline/base-package-manifest.tsv",
+  "restoration_request": "restore-instance-request.json",
+  "restoration_test_instance_launched": false,
+  "metadata_not_classifier_features": true,
+  "snapshot_state": "completed",
+  "verified_at": "2026-10-14T09:44:38.405497+00:00",
+  "source_instance_state": "running",
+  "source_instance_health": "ok",
+  "ssm_status": "Online"
+}
